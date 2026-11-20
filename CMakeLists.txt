@@ -21,6 +21,7 @@ endif()
 # 头文件根目录 = src/，因此源码内写成 #include "render/color.h" 这种形式。
 add_library(soft_raster_core STATIC
   src/version.cpp
+  src/render/color.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -54,6 +55,7 @@ if(SR_BUILD_TESTS)
     tests/main.cpp
     tests/unit/test_smoke.cpp
     tests/unit/test_version.cpp
+    tests/unit/test_color.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

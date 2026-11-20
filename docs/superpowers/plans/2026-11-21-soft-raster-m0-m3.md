@@ -247,17 +247,22 @@ SR_TEST(srgb_is_monotonic_and_invertible) {
     for (int i = 0; i <= 255; ++i) SR_ASSERT_EQ(linearToSrgb8(srgb8ToLinear((uint8_t)i)), (uint8_t)i);
 }
 SR_TEST(encodeSRGB_packs_as_0AARRGGBB) {
-    SR_ASSERT_EQ(encodeSRGB({1,0,0}, 1.0f), 0xFF0000FFu);   // a=FF r=FF g=00 b=00
-    SR_ASSERT_EQ(packBGRA(0x11,0x22,0x33,0xFF), 0xFF112233u);  // 名字是内存序，值是little-endian 序
+    SR_ASSERT_EQ(encodeSRGB({1,0,0}, 1.0f), 0xFFFF0000u);   // 纯红 = A:FF R:FF G:00 B:00
+    SR_ASSERT_EQ(encodeSRGB({0,0,1}, 1.0f), 0xFF0000FFu);   // 纯蓝 = A:FF R:00 G:00 B:FF
+    SR_ASSERT_EQ(packBGRA(0x11,0x22,0x33,0xFF), 0xFF112233u);  // 名字是内存序，值是 little-endian 序
 }
 ```
-（`packBGRA` 的这条断言容易被写反，所以单独 pin：参数按 r,g,b 给，返回值按 `0xAARRGGBB` 读。）
+（`packBGRA` 的这条断言容易被写反，所以单独 pin：参数按 r,g,b 给，返回值按 `0xAARRGGBB` 读。
+**计划初稿在这里把红与蓝的期望值写反了**——`0xFF0000FF` 是蓝不是红；实施时更正，理由见 ledger Ruling 7。）
 
 - [ ] **Step 2: 跑，确认失败** Expected: 编译错误 `color.h: no member 'encodeSRGB'`（或文件不存在）
 
 - [ ] **Step 3: 实现**
 
-采用 IEC 61966-2-1 分段定义（`v <= 0.0031308 ? 12.92v : 1.055*pow(v,1/2.4)-0.055`），并建 **256 项 LUT**（函数内 `static const` 一次性初始化，或 `constexpr` 生成）供热路径使用。加一条测试断言 LUT 与解析式逐索引一致（防止 LUT 手填错）。越界输入 clamp 到 [0,1]，不返回 NaN。
+采用 IEC 61966-2-1 分段定义（`v <= 0.0031308 ? 12.92v : 1.055*pow(v,1/2.4)-0.055`），并建 **4096 项（12bit 输入域）LUT** 供热路径使用。
+**为什么不是 256 项**：输出本来就是 8bit，但把 LUT 索引也量化到 8bit 会做两次量化，暗部会出现 2~3 LSB 偏差，平滑渐变上看得到带状条纹；索引到 12bit 之后误差锁在 1 LSB 内。
+因此对解析式的断言必须是"≤1 LSB"而不是"逐索引相等"（生产用 float pow、参照用 double pow，落在 .5 边界的值必然差一格）。gamma 的**语义**由端点、单调、往返三条测试守住，不靠这一条。
+越界输入 clamp 到 [0,1]；NaN 也要返回一个合法字节（定死为 0，用 `!(v > 0.0f)` 而不是 `v < 0.0f` 来写这个 clamp）。
 
 - [ ] **Step 4: 跑，全绿** Expected: `100% tests passed`
 
