@@ -58,7 +58,7 @@ M0 的样子（离屏渲染；HUD 两行文字由自绘的 8×8 位图字体画�
 |---|---|---|
 | M0 | 仓库骨架、CMake、Win32 窗口 + DIB、测试图案、BMP 截图、位图字体 HUD | ✅ [笔记](docs/notes/M0-骨架与像素通路.md) |
 | M1 | 数学库 + 标量 edge-function 光栅器（Backend A）| ☐ |
-| M2 | 完整几何阶段：VS / 六面裁剪 / 透视除法 / 视口 / Setup / 背面剔除 | ☐ |
+| M2 | 完整几何阶段：VS / 六面裁剪 / 透视除法 / 视口 / Setup / 背面剔除 | ✅ [笔记](docs/notes/M2-几何阶段.md) |
 | M3 | Z-buffer + 透视正确插值 + 顶点色 + golden image | ☐ |
 | M4 | 透视正确 UV + 纹理采样 + mipmap | ☐ |
 | M5 | OBJ/MTL 导入 + 多材质 + 包围球自动 fit | ☐ |
