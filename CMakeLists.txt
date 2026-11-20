@@ -64,6 +64,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_patterns.cpp
     tests/unit/test_bmp.cpp
     tests/unit/test_overlay_font.cpp
+    tests/unit/test_vec.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
