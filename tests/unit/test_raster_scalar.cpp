@@ -106,6 +106,35 @@ SR_TEST(square_split_on_the_other_diagonal_has_no_gap_and_no_overlap) {
         for (int x = 0; x < 4; ++x) SR_ASSERT(c.rt.color.readPacked(x, y) != kClear);
 }
 
+SR_TEST(reversed_winding_covers_exactly_the_same_pixels) {
+    // 同一个三角形，顶点顺序反过来，覆盖的像素必须一模一样。
+    // 这条测试是 M2 集成阶段补的：EdgeFunc 的内侧法线 {-e.y, e.x} 只对一种绕向成立，
+    // 而"正面三角形"在 top-down 屏幕空间里恰好是 area2 < 0 的那一种 ——
+    // M1 的全部测试用例都是正绕向，所以这个 bug 一直到立方体接进来才暴露（症状：covered = 0）。
+    Canvas c{16, 16};
+    const uint32_t col = sr::encodeSRGB({1, 1, 1});
+    const sr::Vec2 v0{2.5f, 3.5f}, v1{13.5f, 2.5f}, v2{4.5f, 12.5f};
+
+    sr::RasterStats fwd, rev;
+    const FlatTriangle a{{v0, v1, v2}, col};
+    const FlatTriangle b{{v0, v2, v1}, col};
+    sr::rasterizeFlatTriangle(c.rt.color, a, &fwd);
+    c.rt.color.clear(kClear);
+    sr::rasterizeFlatTriangle(c.rt.color, b, &rev);
+
+    SR_ASSERT(fwd.pixelsCovered > 0);
+    SR_ASSERT_EQ(rev.pixelsCovered, fwd.pixelsCovered);
+
+    // 逐像素比对
+    Canvas c2{16, 16};
+    sr::rasterizeFlatTriangle(c2.rt.color, a);
+    Canvas c3{16, 16};
+    sr::rasterizeFlatTriangle(c3.rt.color, b);
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x)
+            SR_ASSERT_EQ(c2.rt.color.readPacked(x, y), c3.rt.color.readPacked(x, y));
+}
+
 SR_TEST(degenerate_triangle_writes_nothing) {
     Canvas c{16, 16};
     sr::RasterStats s;

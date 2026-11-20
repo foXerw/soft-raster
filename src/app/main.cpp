@@ -65,12 +65,12 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         sr::PipelineState st;
         st.target = &target;
         st.vertexShader = sr::transformVS;
-        st.fragmentShader = sr::flatColorFS;
+        st.fragmentShader = sr::vertexColorFS;
         st.mode = sr::ShadingMode::FlatColor;
         st.depthTest = false;   // M3 打开
         st.depthWrite = false;
         st.cull.backfaceCull = !g_showBackfaces;
-        st.fu.baseColor = {0.10f, 0.55f, 0.35f};
+        
 
         st.vu.model = sr::Mat4::rotationX(0.43f) * sr::Mat4::rotationY(phase);
         st.vu.view = sr::makeLookAt({0, 0, 5}, {0, 0, 0}, {0, 1, 0});

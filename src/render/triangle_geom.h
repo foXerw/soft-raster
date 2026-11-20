@@ -42,9 +42,12 @@ inline GeomReject buildTriangleGeometryChecked(const Vec2 in[3], int targetWidth
     if (!(std::fabs(area2) > 1e-6f)) return GeomReject::Degenerate;   // 退化：共线或重合
     out.area2 = area2;
 
-    out.edges[0] = EdgeFunc::fromEdge(in[0], in[1]);
-    out.edges[1] = EdgeFunc::fromEdge(in[1], in[2]);
-    out.edges[2] = EdgeFunc::fromEdge(in[2], in[0]);
+    // 内侧统一为正：绕向用 sign 吸收掉，而不是把顶点顺序改写
+    // （改顶点顺序会让"第一个顶点的 varying"这种 flat 取值悄悄换掉一个顶点）。
+    const float sign = (area2 > 0.0f) ? 1.0f : -1.0f;
+    out.edges[0] = EdgeFunc::fromEdge(in[0], in[1], sign);
+    out.edges[1] = EdgeFunc::fromEdge(in[1], in[2], sign);
+    out.edges[2] = EdgeFunc::fromEdge(in[2], in[0], sign);
 
     // 包围盒取像素中心的整数范围：min 向上取整、max 向下取整，
     // 这样盒子里的像素中心一定落在 [floor(min), ceil(max)] 之内。

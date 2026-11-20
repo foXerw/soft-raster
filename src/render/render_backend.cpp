@@ -79,6 +79,7 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
             in.position = mesh.positions[idx];
             in.normal = idx < mesh.normals.size() ? mesh.normals[idx] : Vec3{0, 1, 0};
             in.uv = idx < mesh.uvs.size() ? mesh.uvs[idx] : Vec2{0, 0};
+            in.color = idx < mesh.colors.size() ? mesh.colors[idx] : Vec4{1, 1, 1, 1};
             cv[k] = state.vertexShader != nullptr ? state.vertexShader(in, state.vu) : ClipVertex{};
         }
 

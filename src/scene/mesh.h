@@ -15,6 +15,9 @@ struct Mesh {
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
     std::vector<Vec2> uvs;
+    // 顶点色（线性空间 + alpha）。之所以是 Vec4 而不是 LinearColor：
+    // 它要作为一个 4 分量的 varying 走完整条插值管线，M3 的 PlaneEq 数组按 float 分量索引。
+    std::vector<Vec4> colors;
     std::vector<uint32_t> indices;
     BBox bounds;
 

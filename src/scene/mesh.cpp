@@ -20,7 +20,18 @@ struct QuadFace {
     Vec3 normal;
 };
 
-void appendQuad(Mesh& m, const QuadFace& f, bool perFaceNormals) {
+// 面色必须两两可区分：M2 的 painter 缺陷测试靠"中心像素是哪个面的颜色"来判定，
+// 单色立方体在那个姿态下看起来完全正常（凸体 + 剔除已经解决了遮挡），缺陷是看不见的。
+constexpr Vec4 kFaceColors[6] = {
+    {1.00f, 0.20f, 0.20f, 1.0f},   // +X
+    {0.20f, 0.95f, 0.25f, 1.0f},   // -X
+    {0.25f, 0.35f, 1.00f, 1.0f},   // +Y
+    {1.00f, 0.95f, 0.20f, 1.0f},   // -Y
+    {0.95f, 0.25f, 1.00f, 1.0f},   // +Z
+    {0.20f, 0.90f, 0.95f, 1.0f},   // -Z
+};
+
+void appendQuad(Mesh& m, const QuadFace& f, bool perFaceNormals, const Vec4& faceColor) {
     uint32_t q[4];
     for (int i = 0; i < 4; ++i) {
         const Vec2 uv{static_cast<float>(i & 1), static_cast<float>(i >> 1)};
@@ -44,6 +55,7 @@ void appendQuad(Mesh& m, const QuadFace& f, bool perFaceNormals) {
             m.positions.push_back(f.v[i]);
             m.normals.push_back(perFaceNormals ? f.normal : normalize(f.v[i]));
             m.uvs.push_back(uv);
+            m.colors.push_back(faceColor);
         }
     }
     m.indices.insert(m.indices.end(), {q[0], q[1], q[2], q[0], q[2], q[3]});
@@ -64,7 +76,7 @@ Mesh makeCube(float size, bool perFaceNormals) {
         {{ {-h, -h, h}, {h, -h, h}, {h, h, h}, {-h, h, h} }, {0, 0, 1}},    // +Z
         {{ {h, -h, -h}, {-h, -h, -h}, {-h, h, -h}, {h, h, -h} }, {0, 0, -1}},  // -Z
     };
-    for (const QuadFace& f : faces) appendQuad(m, f, perFaceNormals);
+    for (int i = 0; i < 6; ++i) appendQuad(m, faces[i], perFaceNormals, kFaceColors[i]);
     m.recomputeBounds();
     return m;
 }
@@ -86,6 +98,7 @@ Mesh makeUVSphere(float radius, int stacks, int slices, bool duplicatedPoleVerts
             m.normals.push_back(dir);
             m.uvs.push_back(Vec2{static_cast<float>(j) / static_cast<float>(slices),
                                  static_cast<float>(i) / static_cast<float>(stacks)});
+            m.colors.push_back(Vec4{1, 1, 1, 1});
         }
     }
 
@@ -125,6 +138,7 @@ Mesh makeTorus(float majorRadius, float minorRadius, int ringSegments, int sideS
             m.normals.push_back(normalize(Vec3{cp * ct, sp, cp * st}));
             m.uvs.push_back(Vec2{static_cast<float>(i) / static_cast<float>(ringSegments),
                                  static_cast<float>(j) / static_cast<float>(sideSegments)});
+            m.colors.push_back(Vec4{1, 1, 1, 1});
         }
     }
     const int stride = sideSegments + 1;

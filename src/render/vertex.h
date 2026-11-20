@@ -48,6 +48,7 @@ struct VSIn {
     Vec3 position;
     Vec3 normal;
     Vec2 uv;
+    Vec4 color{1, 1, 1, 1};   // 顶点色；没有颜色的几何体传白
 };
 
 // 裁剪阶段的输入/输出顶点。

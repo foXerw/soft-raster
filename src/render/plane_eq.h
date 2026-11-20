@@ -22,12 +22,16 @@ struct EdgeFunc {
     Vec2 n;               // 内侧法线
     float c = 0.0f;       // 使 evaluate(p0) == evaluate(p1) == 0
 
-    static EdgeFunc fromEdge(const Vec2& a, const Vec2& b) {
+    // sign 由三角形的绕向决定（见 buildTriangleGeometryChecked 的调用点）：
+    // {-e.y, e.x} 让"面积叉积为正"的那种顶点顺序内部为正；反过来的绕向必须取负。
+    // 少了这个参数，负绕向的三角形会一个像素都不覆盖 —— 而 top-down 屏幕空间里
+    // **正面恰好是负绕向**，所以这个 bug 只在立方体接进来时才暴露（症状：covered = 0）。
+    static EdgeFunc fromEdge(const Vec2& a, const Vec2& b, float sign = 1.0f) {
         const Vec2 e{b.x - a.x, b.y - a.y};
         EdgeFunc f;
         f.p0 = a;
         f.p1 = b;
-        f.n = {-e.y, e.x};
+        f.n = {-e.y * sign, e.x * sign};
         f.c = -(f.n.x * a.x + f.n.y * a.y);
         return f;
     }
