@@ -24,6 +24,7 @@ add_library(soft_raster_core STATIC
   src/render/color.cpp
   src/render/render_target.cpp
   src/render/patterns.cpp
+  src/loader/bmp_writer.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -60,12 +61,22 @@ if(SR_BUILD_TESTS)
     tests/unit/test_color.cpp
     tests/unit/test_render_target.cpp
     tests/unit/test_patterns.cpp
+    tests/unit/test_bmp.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 
   if(MSVC)
     target_compile_options(soft_raster_tests PRIVATE /W4 /utf-8 /MP /EHsc)
+  endif()
+
+  # g++ 侧把运行时静态链进测试可执行文件。原因：这台机器上 PATH 同时有 Git 的
+  # /mingw64/bin 与 MSYS2 的 /c/msys64/ucrt64/bin，动态链接出来的 exe 会去找
+  # libstdc++-6.dll / libgcc_s_*-1.dll，而 CTest 起进程用的是 Windows PATH —— 找不到时
+  # 症状是 CTest 报 **Timeout**（进程根本没能启动），非常容易误判成测试里死了循环。
+  # -static 之后没有外部运行时 DLL，两侧都能跑。
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(soft_raster_tests PRIVATE -static)
   endif()
 
   add_test(NAME unit COMMAND soft_raster_tests)
