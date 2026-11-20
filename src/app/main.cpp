@@ -23,9 +23,13 @@
 #include "app/surface.h"
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
+#include "math/transform.h"
+#include "render/builtin_shaders.h"
 #include "render/color.h"
+#include "render/render_backend.h"
 #include "render/overlay_font.h"
 #include "render/patterns.h"
+#include "scene/mesh.h"
 #include "render/raster_scalar.h"
 #include "render/render_target.h"
 #include "version.h"
@@ -43,27 +47,41 @@ constexpr float kBottom = 0.85f;
 
 // 渲染一整帧。M0 还没有任何 3D：能证明"像素从我们手里走到了屏幕"就够。
 // 从这里到 M2 之间唯一的变化是"这一帧的内容由谁产生"。
+bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
+
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine) {
     target.depth.clear();
     const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
     const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
     sr::fillLinearGradient(target.color, a, b, phase);
 
-    // M1 的可见成果：一个屏幕空间三角形。顶点随 phase 绕中心旋转并呼吸，
-    // 这样"改顶点会怎样"能直接看出来（设计文档 §8 M1 的验收）。
-    // 注意它故意**没有**深度测试与插值：这是 Backend A 的最薄形态。
+    // M2 的可见成果：一个 MVP 变换的旋转立方体，面纯色，**故意不启用深度**。
+    // 剔除开着时它是干净的（凸体 + 剔除已经解决了遮挡）；把 cull 关掉就能看到
+    // 背面透出来盖住正面 —— 那是 painter's 算法的缺陷，也是 M3 的动机。
     {
-        const float cx = static_cast<float>(target.color.width) * 0.5f;
-        const float cy = static_cast<float>(target.color.height) * 0.62f;
-        const float r = static_cast<float>(target.color.height) * 0.30f;
-        const float breathe = 1.0f + 0.15f * std::sin(phase * 2.0f);
-        sr::Vec2 v[3];
-        for (int i = 0; i < 3; ++i) {
-            const float ang = phase + static_cast<float>(i) * (2.0f * 3.14159265f / 3.0f);
-            v[i] = sr::Vec2{cx + r * breathe * std::cos(ang), cy + r * breathe * std::sin(ang)};
-        }
-        const sr::FlatTriangle tri{{v[0], v[1], v[2]}, sr::encodeSRGB({0.05f, 0.55f, 0.35f})};
-        sr::rasterizeFlatTriangle(target.color, tri);
+        static sr::BackendA backend;
+        static const sr::Mesh cube = sr::makeCube(1.6f, true);
+
+        sr::PipelineState st;
+        st.target = &target;
+        st.vertexShader = sr::transformVS;
+        st.fragmentShader = sr::flatColorFS;
+        st.mode = sr::ShadingMode::FlatColor;
+        st.depthTest = false;   // M3 打开
+        st.depthWrite = false;
+        st.cull.backfaceCull = !g_showBackfaces;
+        st.fu.baseColor = {0.10f, 0.55f, 0.35f};
+
+        st.vu.model = sr::Mat4::rotationX(0.43f) * sr::Mat4::rotationY(phase);
+        st.vu.view = sr::makeLookAt({0, 0, 5}, {0, 0, 0}, {0, 1, 0});
+        st.vu.proj = sr::makePerspective(60.0f * 3.14159265f / 180.0f,
+                                         static_cast<float>(target.color.width) /
+                                             static_cast<float>(target.color.height),
+                                         0.1f, 100.0f);
+        sr::Mat4 inv;
+        st.vu.normalMatrix = sr::Mat4::tryInvert(st.vu.model, inv) ? inv.transposed().upper3x3AsMat4()
+                                                                   : sr::Mat4::identity();
+        backend.draw(cube, st);
     }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
@@ -162,6 +180,7 @@ int runWindow(const app::AppOptions& o) {
         surface->pumpInput(input);
 
         if (input.togglePause) paused = !paused;
+        if (input.toggleWireframe) g_showBackfaces = !g_showBackfaces;   // 借 W 键做 M2 的穿帮演示
         if (input.screenshot) {
             ++screenshotCounter;
             const std::string path = "screenshots/screenshot-" + std::to_string(screenshotCounter) + ".bmp";

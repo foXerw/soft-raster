@@ -1,0 +1,56 @@
+#pragma once
+
+#include <cstdint>
+
+namespace sr {
+
+// 一帧的计数与分阶段耗时。字段名在计划 Task 2.1 定死，测试按这些名字断言。
+//
+// 多线程（M8）下的聚合方式是"每线程一份 + 最后 merge"，不用原子：
+// 原子计数在逐像素路径上是实打实的性能损失，而 tile 之间本来就不共享状态。
+struct FrameStats {
+    int64_t trianglesSubmitted = 0;
+    int64_t trianglesClippedOut = 0;
+    int64_t trianglesDegenerate = 0;
+    int64_t trianglesBackfaceCulled = 0;
+    int64_t trianglesRasterized = 0;
+    int64_t trianglesOffscreen = 0;
+
+    // fragmentsCovered = 通过覆盖判定的像素数；fragmentsWritten = 实际落到颜色的像素数。
+    // 两者之差 = 被深度测试拒掉的像素。M8 的后端一致性测试就靠这四个计数完全相等。
+    int64_t fragmentsCovered = 0;
+    int64_t fragmentsWritten = 0;
+    int64_t fragmentsDepthRejected = 0;
+    int64_t fragmentsShaded = 0;
+
+    int64_t interpClampedCount = 0;
+
+    double msVertex = 0;
+    double msClip = 0;
+    double msSetup = 0;
+    double msRaster = 0;
+    double msTotal = 0;
+
+    void reset() { *this = FrameStats{}; }
+
+    void merge(const FrameStats& o) {
+        trianglesSubmitted += o.trianglesSubmitted;
+        trianglesClippedOut += o.trianglesClippedOut;
+        trianglesDegenerate += o.trianglesDegenerate;
+        trianglesBackfaceCulled += o.trianglesBackfaceCulled;
+        trianglesRasterized += o.trianglesRasterized;
+        trianglesOffscreen += o.trianglesOffscreen;
+        fragmentsCovered += o.fragmentsCovered;
+        fragmentsWritten += o.fragmentsWritten;
+        fragmentsDepthRejected += o.fragmentsDepthRejected;
+        fragmentsShaded += o.fragmentsShaded;
+        interpClampedCount += o.interpClampedCount;
+        msVertex += o.msVertex;
+        msClip += o.msClip;
+        msSetup += o.msSetup;
+        msRaster += o.msRaster;
+        msTotal += o.msTotal;
+    }
+};
+
+}  // namespace sr

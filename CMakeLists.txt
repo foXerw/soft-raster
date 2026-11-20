@@ -27,6 +27,10 @@ add_library(soft_raster_core STATIC
   src/loader/bmp_writer.cpp
   src/render/overlay_font.cpp
   src/render/raster_scalar.cpp
+  src/render/viewport.cpp
+  src/render/builtin_shaders.cpp
+  src/render/render_backend.cpp
+  src/scene/mesh.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -70,6 +74,9 @@ if(SR_BUILD_TESTS)
     tests/unit/test_transform.cpp
     tests/unit/test_plane_eq.cpp
     tests/unit/test_raster_scalar.cpp
+    tests/unit/test_mesh.cpp
+    tests/unit/test_bbox.cpp
+    tests/unit/test_viewport.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )

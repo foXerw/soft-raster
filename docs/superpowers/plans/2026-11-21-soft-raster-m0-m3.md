@@ -75,7 +75,7 @@ ctest --test-dir build-gcc --output-on-failure
 | `src/app/cmdline.h/.cpp` | `--obj/--width/--height/--offscreen/--frames/--out/--backend/--threads/--bench/--no-fit` | 0.6 |
 | `src/app/main.cpp` | 组装：解析 → surface → 帧循环 → 每帧绘制 | 0.6 |
 | `src/render/vertex.h` | `VSIn/VSOut/Varyings/ClipVertex/ScreenVertex` | 2.1 |
-| `src/render/pipeline.h` | `VertexUniforms/FragmentUniforms/DrawState`、`VertexShaderFn`、`FragmentShaderFn`、`ShadingMode` | 2.1 |
+| `src/render/pipeline.h` | `VertexUniforms/FragmentUniforms/PipelineState`、`VertexShaderFn`、`FragmentShaderFn`、`ShadingMode` | 2.1 |
 | `src/render/clipping.h/.cpp` | clip space 六面 Sutherland–Hodgman → 凸多边形（≤8 顶点） | 2.2 |
 | `src/render/viewport.h/.cpp` | 透视除法 + NDC→屏幕（top-down）+ depth [0,1] | 2.3 |
 | `src/render/triangle.h` | `TriangleSetup`（edge funcs、plane eqs、bbox、area2、flags） | 2.4 |
@@ -688,7 +688,7 @@ Mesh makeTorus(float R, float r, int ringSegments, int sideSegments);
 
 struct VertexUniforms { Mat4 model, view, proj; Mat4 normalMatrix; };
 struct FragmentUniforms { LinearColor baseColor; /* M4/M6 再加 texture/lights */ };
-struct DrawState {
+struct PipelineState {
     RenderTarget* target;
     VertexShaderFn vertexShader; FragmentShaderFn fragmentShader;
     VertexUniforms vu; FragmentUniforms fu;
@@ -700,7 +700,7 @@ struct DrawState {
 };
 class RenderBackend { public: virtual ~RenderBackend() = default;
     virtual const char* name() const = 0;
-    virtual void draw(const Mesh&, const DrawState&) = 0; };   // 每 draw call 一次虚调用，内层不再有（C5）
+    virtual void draw(const Mesh&, const PipelineState&) = 0; };   // 每 draw call 一次虚调用，内层不再有（C5）
 class BackendA : public RenderBackend { ... };                 // 标量，M1 的实现挪进来
 }
 ```
@@ -798,7 +798,7 @@ struct TriangleSetup {
     bool backFacing = false;
 };
 // 唯一入口：几何 + 剔除决策 + 梯度准备
-bool setupTriangle(const ScreenVertex in[3], const Viewport&, const DrawState&, TriangleSetup&, SetupResult&);
+bool setupTriangle(const ScreenVertex in[3], const Viewport&, const PipelineState&, TriangleSetup&, SetupResult&);
 }
 ```
 - [ ] **Step 1: 写失败测试** — 断言：
@@ -821,7 +821,7 @@ bool setupTriangle(const ScreenVertex in[3], const Viewport&, const DrawState&, 
 
 **Files:** Modify `src/render/raster_scalar.cpp`（`BackendA::draw` 走完 VS→clip→project→setup→raster 全链）、`src/app/main.cpp`、`src/scene/mesh.cpp`（`makeCube` 的面色）
 **Test:** `tests/unit/test_pipeline_integration.cpp`
-- [ ] **Step 1: 写失败测试**（离屏 `ColorTarget` + `Viewport` + `DrawState`，不打窗口）
+- [ ] **Step 1: 写失败测试**（离屏 `ColorTarget` + `Viewport` + `PipelineState`，不打窗口）
 
 **先说清一件事**：凸立方体在**开启背面剔除**时，三个可见面的投影只在棱上相接、互不覆盖，所以"没有深度"根本不会穿帮。要看到 painter's 的缺陷必须 `backfaceCull = false`。spec §8 的 M2 行"穿帮是好事"据此实现为"关掉剔除"，并在 notes 里把这件事讲透（**剔除本身就是一种遮挡求解**，这是个好问题）。立方体面序固定为 `+X,-X,+Y,-Y,+Z,-Z`，每面用可区分的纯色。
 
@@ -964,7 +964,7 @@ int  compareBmp(const ColorTarget&, const std::string& goldenPath, int tolerance
 
 **M4 纹理**（`texture.h/.cpp`、`sampler.h/.cpp`、mip 链生成、`loader/image_stb.*` + `image_tga.*`）
 - 任务分解要点：`generateMipChain`（纯函数，可单测：面积/像素和、盒式滤波的正确值）→ `sampleNearest`（UV 越界与 wrap）→ `sampleBilinear`（在 texel 中心取整数、跨边界的 wrap 一致性）→ `mipLevelFromDerivatives`（用 2.4 已算好的 `dudx/dvdx`，断言已知三角形的层级选择）→ trilinear → `stb_image` 接入（`third_party/stb_image.h` + `image_stb.cpp`，**唯一一处第三方**，C2 三条限制：只此文件、只解码、core 不感知）→ 手写 TGA（作为 stb 缺席的回退，且是"图像就是字节数组"的教学样本）→ 立方体贴 checker，`1` 键开关 mip 观察闪烁（A 组验收：spec §8 M4 的可见成果）。
-- 展开时必须回答：`FilterMode` 放在 `FragmentUniforms` 还是 `DrawState`；mip 生成放 core 还是 loader；PNG 的 16bit/灰度/调色板输入如何归一到 RGBA8。
+- 展开时必须回答：`FilterMode` 放在 `FragmentUniforms` 还是 `PipelineState`；mip 生成放 core 还是 loader；PNG 的 16bit/灰度/调色板输入如何归一到 RGBA8。
 
 **M5 OBJ/MTL 导入 + 自动 fit**（`loader/obj.*`、`loader/mtl.*`、`scene/camera.*`）
 - `parseObj` 做成**纯字符串/流函数**（不 IO），便于单测：负索引、quad→两三角、缺 `vn`→面法线、`vt` 缺失→uv=0、`usemtl` 分组出多个 `SubMesh`、`mtllib` 解析、`map_Kd` 的相对路径拼接（**外部模型最容易咬人的地方**：贴图路径相对 .mtl 而非 cwd）。

@@ -1,0 +1,28 @@
+#include "render/builtin_shaders.h"
+
+namespace sr {
+
+ClipVertex transformVS(const VSIn& in, const VertexUniforms& u) {
+    const Vec4 clip = u.proj * (u.view * (u.model * makeVec4(in.position, 1.0f)));
+
+    Varyings v;
+    v.color = Vec4{0.8f, 0.8f, 0.8f, 1.0f};
+    // 法线用 normalMatrix（M6 才有非均匀缩放，但矩阵已经准备好了）
+    v.worldNormal = xyz(u.normalMatrix * makeVec4(in.normal, 0.0f));
+    v.uv = in.uv;
+    v.worldPos = in.position;
+
+    ClipVertex out;
+    out.clip = clip;
+    // 关键的一步：交给裁剪阶段的是 v/w，不是 v。
+    const float invW = 1.0f / clip.w;
+    out.vOverW = v * invW;
+    return out;
+}
+
+bool flatColorFS(const FragmentInput&, const FragmentUniforms& u, FragmentOutput& out) {
+    out.color = u.baseColor;
+    return true;
+}
+
+}  // namespace sr
