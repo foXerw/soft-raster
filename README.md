@@ -43,7 +43,8 @@ CTest 会把它记成 Timeout —— 没有上限时，一个误导性故障能�
 ./build/Debug/soft-raster.exe --help          # 完整选项表
 ```
 
-M0 可用的按键：`P` 暂停、`S` 截图到 `screenshots/`、`Esc` 退出。
+M0–M3 可用的按键：`P` 暂停、`S` 截图到 `screenshots/`、`V` 循环调试视图（color → depth → gray）、
+`W` 切换背面剔除（用来演示"没有深度会怎样"）、`Esc` 退出。
 `V`（视图循环）、`O`（单步）、`W`（线框）、`R`（重载模型）分别在 M2/M5/M7 落地。
 
 M0 的样子（离屏渲染；HUD 两行文字由自绘的 8×8 位图字体画出，不经过 GDI 字体）：
@@ -52,14 +53,25 @@ M0 的样子（离屏渲染；HUD 两行文字由自绘的 8×8 位图字体画�
 
 完整笔记见 [`docs/notes/M0-骨架与像素通路.md`](docs/notes/M0-骨架与像素通路.md)。
 
+## 回归基准
+
+```bash
+ctest --test-dir build -C Debug --timeout 60        # 单元测试 + golden 比对
+./build/Debug/soft-raster.exe --golden-write assets/golden/m3_cube.bmp   # 重新生成基准图
+```
+
+golden 只在 MSVC 主路径判定（g++ 侧只要求编译 + 纯逻辑单测全绿），理由见
+[`docs/notes/M3-深度与插值.md`](docs/notes/M3-深度与插值.md) 第 6 节与
+[`assets/golden/README.md`](assets/golden/README.md)。
+
 ## 里程碑进度
 
 | # | 内容 | 状态 |
 |---|---|---|
 | M0 | 仓库骨架、CMake、Win32 窗口 + DIB、测试图案、BMP 截图、位图字体 HUD | ✅ [笔记](docs/notes/M0-骨架与像素通路.md) |
-| M1 | 数学库 + 标量 edge-function 光栅器（Backend A）| ☐ |
+| M1 | 数学库 + 标量 edge-function 光栅器（Backend A）| ✅ [笔记](docs/notes/M1-数学与光栅器.md) |
 | M2 | 完整几何阶段：VS / 六面裁剪 / 透视除法 / 视口 / Setup / 背面剔除 | ✅ [笔记](docs/notes/M2-几何阶段.md) |
-| M3 | Z-buffer + 透视正确插值 + 顶点色 + golden image | ☐ |
+| M3 | Z-buffer + 透视正确插值 + 顶点色 + golden image | ✅ [笔记](docs/notes/M3-深度与插值.md) |
 | M4 | 透视正确 UV + 纹理采样 + mipmap | ☐ |
 | M5 | OBJ/MTL 导入 + 多材质 + 包围球自动 fit | ☐ |
 | M6 | 光照：Gouraud 与 Blinn-Phong 逐像素对比、线性空间 + sRGB | ☐ |
