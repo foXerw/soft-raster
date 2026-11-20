@@ -57,6 +57,8 @@ bool setupTriangle(const ScreenVertex in[3], const ColorTarget& color, const Cul
     //    写错成 attr 的症状要到 M3 的四边形数值测试才暴露，所以这里注释点名它。
     float w0 = in[0].invW, w1 = in[1].invW, w2 = in[2].invW;
     out.planeInvW = PlaneEq::fromTriangle(in[0].pos, w0, in[1].pos, w1, in[2].pos, w2);
+    out.planeDepth = PlaneEq::fromTriangle(in[0].pos, in[0].depth, in[1].pos, in[1].depth,
+                                           in[2].pos, in[2].depth);
     if (out.planeInvW.degenerate) {
         result.reason = RejectReason::Degenerate;
         return false;

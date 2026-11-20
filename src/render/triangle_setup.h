@@ -61,6 +61,10 @@ struct SetupResult {
 struct TriangleSetup {
     TriangleGeom geom;
     PlaneEq planeInvW;
+    // 深度单独一张平面：depth = ndcZ*0.5+0.5，而 ndcZ 在屏幕空间里是仿射的
+    // （z_view 与 w 成正比），所以深度**不需要**透视校正。
+    // 把这件事写成字段而不是口头承诺，测试 depth_is_affine_in_screen_space 会守住它。
+    PlaneEq planeDepth;
     PlaneEq planeAttr[kVaryingFloatCount];
     float dudx = 0, dudy = 0, dvdx = 0, dvdy = 0;
     Rect tileRange;

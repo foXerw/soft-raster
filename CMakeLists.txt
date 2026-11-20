@@ -82,6 +82,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_clipping.cpp
     tests/unit/test_triangle_setup.cpp
     tests/unit/test_pipeline_integration.cpp
+    tests/unit/test_interpolate.cpp
+    tests/unit/test_depth.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
