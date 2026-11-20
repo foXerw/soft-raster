@@ -22,6 +22,8 @@ endif()
 add_library(soft_raster_core STATIC
   src/version.cpp
   src/render/color.cpp
+  src/render/render_target.cpp
+  src/render/patterns.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -56,6 +58,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_smoke.cpp
     tests/unit/test_version.cpp
     tests/unit/test_color.cpp
+    tests/unit/test_render_target.cpp
+    tests/unit/test_patterns.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
