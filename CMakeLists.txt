@@ -28,6 +28,7 @@ add_library(soft_raster_core STATIC
   src/render/overlay_font.cpp
   src/render/raster_scalar.cpp
   src/render/viewport.cpp
+  src/render/clipping.cpp
   src/render/builtin_shaders.cpp
   src/render/render_backend.cpp
   src/scene/mesh.cpp
@@ -77,6 +78,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_mesh.cpp
     tests/unit/test_bbox.cpp
     tests/unit/test_viewport.cpp
+    tests/unit/test_clipping.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
