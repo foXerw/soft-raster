@@ -28,6 +28,11 @@ struct Mesh {
 };
 
 Mesh makeCube(float size, bool perFaceNormals);
+
+// 把 colors 改成"位置编码色"（每个顶点唯一），用来验证插值本身。
+// 面色测试要的是**可区分**，插值测试要的是**不连续就看得见**，两者是相反的要求，
+// 所以这里给一个显式的切换而不是让 makeCube 同时满足。
+void applyPositionColors(Mesh& m);
 Mesh makeUVSphere(float radius, int stacks, int slices, bool duplicatedPoleVerts = true);
 Mesh makeTorus(float majorRadius, float minorRadius, int ringSegments, int sideSegments);
 

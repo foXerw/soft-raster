@@ -60,15 +60,19 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     // 背面透出来盖住正面 —— 那是 painter's 算法的缺陷，也是 M3 的动机。
     {
         static sr::BackendA backend;
-        static const sr::Mesh cube = sr::makeCube(1.6f, true);
+        static sr::Mesh cube = [] {
+            sr::Mesh m = sr::makeCube(1.6f, true);
+            sr::applyPositionColors(m);   // M3：位置编码色，插值不连续就看得见
+            return m;
+        }();
 
         sr::PipelineState st;
         st.target = &target;
         st.vertexShader = sr::transformVS;
         st.fragmentShader = sr::vertexColorFS;
         st.mode = sr::ShadingMode::FlatColor;
-        st.depthTest = false;   // M3 打开
-        st.depthWrite = false;
+        st.depthTest = true;
+        st.depthWrite = true;
         st.cull.backfaceCull = !g_showBackfaces;
         
 

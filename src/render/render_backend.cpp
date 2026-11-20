@@ -4,6 +4,7 @@
 #include "render/builtin_shaders.h"
 #include "render/clipping.h"
 #include "render/color.h"
+#include "render/interpolate.h"
 #include "render/plane_eq.h"
 #include "render/raster_scalar.h"
 #include "render/triangle_setup.h"
@@ -49,15 +50,35 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
             return;
         }
 
-        // M3 之前不做插值：varying 直接取第一个顶点的值（flat shading）。
-        // 深度测试在这里读取但恒通过 —— 标志位是 M2 就预留的，M3 只填实现。
-        FragmentInput fi;
-        fi.v = sv[0].v;
-        fi.depth = sv[0].depth;
         FragmentOutput fo;
+        int64_t* clampCounter = (stats != nullptr) ? &stats->interpClampedCount : nullptr;
         forEachCoveredPixel(setup.geom, [&](int x, int y) {
             bump(stats, &FrameStats::fragmentsCovered);
-            fi.screen = Vec2{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
+            const float px = static_cast<float>(x) + 0.5f;
+            const float py = static_cast<float>(y) + 0.5f;
+            const Interpolated ip = interpolateAt(setup, px, py, clampCounter);
+
+            // 深度比较用 `<=`（设计文档 §7.1）：共面时后画者赢，这就是 Z-fighting 的取舍，
+            // 由 coplanar_triangles_last_writer_wins 那条测试 pin 住而不是假装它不存在。
+            // 读取与写入互相独立：depthWrite=false 时不遮挡也不污染（测试同名）。
+            float d = 1.0f;
+            if (state.depthTest) {
+                d = target.depth.read(x, y);
+                if (!(ip.depth <= d)) {
+                    bump(stats, &FrameStats::fragmentsDepthRejected);
+                    return;
+                }
+                d = ip.depth;
+            } else {
+                d = ip.depth;
+            }
+
+            FragmentInput fi;
+            fi.screen = Vec2{px, py};
+            fi.depth = ip.depth;
+            fi.v = ip.v;
+            fi.uvDerivX = Vec2{setup.dudx, setup.dudy};
+            fi.uvDerivY = Vec2{setup.dvdx, setup.dvdy};
             if (state.fragmentShader != nullptr) {
                 if (!state.fragmentShader(fi, state.fu, fo)) return;   // discard
             } else {
@@ -66,6 +87,7 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
             bump(stats, &FrameStats::fragmentsShaded);
             target.color.writePacked(x, y, encodeSRGB(fo.color));
             bump(stats, &FrameStats::fragmentsWritten);
+            if (state.depthWrite) target.depth.write(x, y, ip.depth);
         });
         bump(stats, &FrameStats::trianglesRasterized);
     };

@@ -156,4 +156,14 @@ Mesh makeTorus(float majorRadius, float minorRadius, int ringSegments, int sideS
     return m;
 }
 
+void applyPositionColors(Mesh& m) {
+    if (m.bounds.empty()) m.recomputeBounds();
+    const Vec3 c0 = m.bounds.center();
+    const float r = m.bounds.radius() > 1e-6f ? m.bounds.radius() : 1.0f;
+    for (size_t i = 0; i < m.positions.size(); ++i) {
+        const Vec3 d = (m.positions[i] - c0) / r;
+        m.colors[i] = Vec4{0.5f + 0.5f * d.x, 0.5f + 0.5f * d.y, 0.5f + 0.5f * d.z, 1.0f};
+    }
+}
+
 }  // namespace sr
