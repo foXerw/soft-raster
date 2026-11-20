@@ -1,0 +1,24 @@
+# 行尾与二进制判定。这一条不是风格问题：golden 回归基准是 BMP，若 Git 的文本转换
+# 对它做了 CRLF 改写，比对会整帧失败且症状看起来像"渲染回归"。
+* text=auto eol=lf
+
+# 图像与二进制资产：绝不做行尾转换
+*.bmp binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.tga binary
+
+# 源码（gitattributes 一行一个模式，不能把多个模式写在同一行）
+*.h text eol=lf
+*.hpp text eol=lf
+*.inl text eol=lf
+*.cpp text eol=lf
+*.md text eol=lf
+# 编译中间产物不会入库（见 .gitignore 顶部注释）；Wavefront OBJ 是文本，同样按文本处理。
+# 注意：gitattributes 不支持行尾注释，`#` 只能出现在行首。
+*.obj text eol=lf
+*.mtl text eol=lf
+
+# 导出脚本产物
+*.ps1 text eol=crlf
