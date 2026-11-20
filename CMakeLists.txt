@@ -34,6 +34,7 @@ add_library(soft_raster_core STATIC
   src/render/builtin_shaders.cpp
   src/render/render_backend.cpp
   src/scene/mesh.cpp
+  src/scene/golden_scene.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -87,11 +88,14 @@ if(SR_BUILD_TESTS)
     tests/unit/test_depth.cpp
     tests/unit/test_vertex_color.cpp
     tests/unit/test_sink.cpp
+    tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+  # golden 参考图的路径由这里注入：CTest 的 cwd 是 build/，相对路径会指错地方。
+  target_compile_definitions(soft_raster_tests PRIVATE SR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 
   if(MSVC)
     target_compile_options(soft_raster_tests PRIVATE /W4 /utf-8 /MP /EHsc)

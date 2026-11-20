@@ -88,6 +88,11 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             if (!p.nextString("--obj", out.obj)) return false;
             continue;
         }
+        if (a == "--golden-write") {
+            if (!p.nextString("--golden-write", out.goldenWrite)) return false;
+            out.offscreen = true;   // 写 golden 不需要窗口
+            continue;
+        }
         if (a == "--out") {
             if (!p.nextString("--out", out.out)) return false;
             continue;

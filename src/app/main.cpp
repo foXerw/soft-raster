@@ -30,6 +30,7 @@
 #include "render/sink.h"
 #include "render/overlay_font.h"
 #include "render/patterns.h"
+#include "scene/golden_scene.h"
 #include "scene/mesh.h"
 #include "render/raster_scalar.h"
 #include "render/render_target.h"
@@ -111,6 +112,17 @@ int saveScreenshot(const sr::RenderTarget& target, const std::string& path, std:
         return 1;
     }
     std::printf("[screenshot] 已写出 %s (%dx%d)\n", path.c_str(), copy.width, copy.height);
+    return 0;
+}
+
+int runGoldenWrite(const app::AppOptions& o) {
+    auto surface = app::createOffscreenSurface(sr::kGoldenWidth, sr::kGoldenHeight);
+    sr::FrameStats stats;
+    sr::renderGoldenScene(surface->target(), &stats);
+    std::string err;
+    if (saveScreenshot(surface->target(), o.goldenWrite, err) != 0) return 1;
+    const std::string line = "[golden] " + o.goldenWrite + " 由 " + sr::buildInfoString();
+    std::puts(line.c_str());
     return 0;
 }
 
@@ -258,6 +270,7 @@ int main(int argc, char** argv) {
         std::printf("%s", app::usageString().c_str());
         return 0;
     }
+    if (!o.goldenWrite.empty()) return runGoldenWrite(o);
     if (o.offscreen) return runOffscreen(o);
     return runWindow(o);
 }

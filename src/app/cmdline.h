@@ -18,6 +18,7 @@ struct AppOptions {
     int autoClose = 0;    // >0 = 窗口模式渲染这么多帧后自动关闭（冒烟测试用，见 M0 notes）
     bool offscreen = false;
     bool noFit = false;
+    std::string goldenWrite;   // 非空 = 渲染 golden 场景并写到这个路径
     bool help = false;
 };
 
