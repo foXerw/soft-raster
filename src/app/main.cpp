@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <filesystem>
@@ -25,6 +26,7 @@
 #include "render/color.h"
 #include "render/overlay_font.h"
 #include "render/patterns.h"
+#include "render/raster_scalar.h"
 #include "render/render_target.h"
 #include "version.h"
 
@@ -46,6 +48,23 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
     const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
     sr::fillLinearGradient(target.color, a, b, phase);
+
+    // M1 的可见成果：一个屏幕空间三角形。顶点随 phase 绕中心旋转并呼吸，
+    // 这样"改顶点会怎样"能直接看出来（设计文档 §8 M1 的验收）。
+    // 注意它故意**没有**深度测试与插值：这是 Backend A 的最薄形态。
+    {
+        const float cx = static_cast<float>(target.color.width) * 0.5f;
+        const float cy = static_cast<float>(target.color.height) * 0.62f;
+        const float r = static_cast<float>(target.color.height) * 0.30f;
+        const float breathe = 1.0f + 0.15f * std::sin(phase * 2.0f);
+        sr::Vec2 v[3];
+        for (int i = 0; i < 3; ++i) {
+            const float ang = phase + static_cast<float>(i) * (2.0f * 3.14159265f / 3.0f);
+            v[i] = sr::Vec2{cx + r * breathe * std::cos(ang), cy + r * breathe * std::sin(ang)};
+        }
+        const sr::FlatTriangle tri{{v[0], v[1], v[2]}, sr::encodeSRGB({0.05f, 0.55f, 0.35f})};
+        sr::rasterizeFlatTriangle(target.color, tri);
+    }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
     // 离屏路径也画它，这样"字体对不对"能靠一张 BMP 检查，而不必等人盯着窗口看。

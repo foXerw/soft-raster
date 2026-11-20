@@ -26,6 +26,7 @@ add_library(soft_raster_core STATIC
   src/render/patterns.cpp
   src/loader/bmp_writer.cpp
   src/render/overlay_font.cpp
+  src/render/raster_scalar.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -67,6 +68,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_vec.cpp
     tests/unit/test_mat.cpp
     tests/unit/test_transform.cpp
+    tests/unit/test_plane_eq.cpp
+    tests/unit/test_raster_scalar.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
