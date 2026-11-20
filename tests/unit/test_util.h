@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "harness.h"
+#include "math/vec.h"
 #include "render/render_target.h"
 
 inline void expectVec3Near(const sr::Vec3& a, float x, float y, float z, float tol) {

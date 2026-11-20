@@ -27,6 +27,7 @@
 #include "render/builtin_shaders.h"
 #include "render/color.h"
 #include "render/render_backend.h"
+#include "render/sink.h"
 #include "render/overlay_font.h"
 #include "render/patterns.h"
 #include "scene/mesh.h"
@@ -48,6 +49,7 @@ constexpr float kBottom = 0.85f;
 // 渲染一整帧。M0 还没有任何 3D：能证明"像素从我们手里走到了屏幕"就够。
 // 从这里到 M2 之间唯一的变化是"这一帧的内容由谁产生"。
 bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
+sr::DebugViewSink g_sink;       // 'V' 循环：color → depth → gray
 
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine) {
     target.depth.clear();
@@ -92,6 +94,9 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     // 离屏路径也画它，这样"字体对不对"能靠一张 BMP 检查，而不必等人盯着窗口看。
     const uint32_t fg = sr::encodeSRGB({1.0f, 1.0f, 1.0f});
     const uint32_t bg = sr::encodeSRGB({0.015f, 0.015f, 0.02f});
+    // 调试视图在文字之前应用：HUD 必须永远可读，否则切到深度视图时文字被一起冲掉。
+    g_sink.present(target);
+
     sr::drawText(target.color, 4, 4, statusLine, fg, bg, 2);
     sr::drawText(target.color, 4, 4 + 2 * sr::kGlyphHeightPx + 4, "P=PAUSE S=SHOT V=VIEW ESC=QUIT",
                  sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
@@ -185,6 +190,14 @@ int runWindow(const app::AppOptions& o) {
 
         if (input.togglePause) paused = !paused;
         if (input.toggleWireframe) g_showBackfaces = !g_showBackfaces;   // 借 W 键做 M2 的穿帮演示
+        if (input.cycleView) {
+            const int next = (static_cast<int>(g_sink.view) + 1) % 3;
+            g_sink.view = static_cast<sr::DebugViewSink::View>(next);
+            static const char* kNames[] = {"COLOR", "DEPTH", "GRAY"};
+            // puts 自带换行，所以这里不需要转义序列（本会话里 "\\n" 被工具层吃成真实换行两次了）。
+            const std::string line = std::string("[view] ") + kNames[next];
+            std::puts(line.c_str());
+        }
         if (input.screenshot) {
             ++screenshotCounter;
             const std::string path = "screenshots/screenshot-" + std::to_string(screenshotCounter) + ".bmp";

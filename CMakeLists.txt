@@ -27,6 +27,7 @@ add_library(soft_raster_core STATIC
   src/loader/bmp_writer.cpp
   src/render/overlay_font.cpp
   src/render/raster_scalar.cpp
+  src/render/sink.cpp
   src/render/viewport.cpp
   src/render/clipping.cpp
   src/render/triangle_setup.cpp
@@ -84,6 +85,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_pipeline_integration.cpp
     tests/unit/test_interpolate.cpp
     tests/unit/test_depth.cpp
+    tests/unit/test_vertex_color.cpp
+    tests/unit/test_sink.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
