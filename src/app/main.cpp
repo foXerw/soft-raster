@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdio>
+#include <string>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -22,6 +23,7 @@
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
 #include "render/color.h"
+#include "render/overlay_font.h"
 #include "render/patterns.h"
 #include "render/render_target.h"
 #include "version.h"
@@ -39,11 +41,19 @@ constexpr float kBottom = 0.85f;
 
 // 渲染一整帧。M0 还没有任何 3D：能证明"像素从我们手里走到了屏幕"就够。
 // 从这里到 M2 之间唯一的变化是"这一帧的内容由谁产生"。
-void renderFrame(sr::RenderTarget& target, float phase) {
+void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine) {
     target.depth.clear();
     const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
     const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
     sr::fillLinearGradient(target.color, a, b, phase);
+
+    // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
+    // 离屏路径也画它，这样"字体对不对"能靠一张 BMP 检查，而不必等人盯着窗口看。
+    const uint32_t fg = sr::encodeSRGB({1.0f, 1.0f, 1.0f});
+    const uint32_t bg = sr::encodeSRGB({0.015f, 0.015f, 0.02f});
+    sr::drawText(target.color, 4, 4, statusLine, fg, bg, 2);
+    sr::drawText(target.color, 4, 4 + 2 * sr::kGlyphHeightPx + 4, "P=PAUSE S=SHOT V=VIEW ESC=QUIT",
+                 sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
 }
 
 int saveScreenshot(const sr::RenderTarget& target, const std::string& path, std::string& err) {
@@ -68,7 +78,10 @@ int runOffscreen(const app::AppOptions& o) {
 
     for (int i = 0; i < o.frames; ++i) {
         sr::Timer frameTimer;
-        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames));
+        const std::string status = "OFFSCREEN FRAME " + std::to_string(i + 1) + "/" +
+                                   std::to_string(o.frames) + "  " + std::to_string(o.width) + "X" +
+                                   std::to_string(o.height);
+        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status);
         frameMs.push_back(frameTimer.elapsedMs());
     }
     const double ms = total.elapsedMs();
@@ -141,7 +154,11 @@ int runWindow(const app::AppOptions& o) {
         const bool shouldRender = !paused || input.stepFrame;
         if (shouldRender) {
             sr::Timer frameTimer;
-            renderFrame(target, phase);
+            const double fpsNow = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "FPS %.1f  %.2f MS  %dx%d%s", fpsNow, lastMs, o.width,
+                          o.height, paused ? "  PAUSED" : "");
+            renderFrame(target, phase, buf);
             // 与帧时间相关：掉帧时动画速度不变（float 累加，所以乘的是 float）。
             phase += static_cast<float>(0.35 * lastMs * 0.001);
             lastMs = frameTimer.elapsedMs();

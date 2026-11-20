@@ -25,6 +25,7 @@ add_library(soft_raster_core STATIC
   src/render/render_target.cpp
   src/render/patterns.cpp
   src/loader/bmp_writer.cpp
+  src/render/overlay_font.cpp
 )
 target_include_directories(soft_raster_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -62,6 +63,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_render_target.cpp
     tests/unit/test_patterns.cpp
     tests/unit/test_bmp.cpp
+    tests/unit/test_overlay_font.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
