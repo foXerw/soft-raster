@@ -21,13 +21,17 @@ struct TriangleGeom {
     float area2 = 0.0f;
 };
 
-// 返回 false 表示这个三角形不该进入光栅：顶点非有限、或面积退化。
+// 拒绝原因分开报告，而不是一个 bool：
+// "完全在屏幕外"是正常事件，"退化"是上游有问题的信号，混成一个计数会掩盖 bug
+// （Task 2.4 的 setup_offscreen_triangle_is_reported_offscreen_not_degenerate 守住这条）。
+enum class GeomReject : uint8_t { None = 0, NonFinite, Degenerate, Offscreen };
+
 // 判定顺序是刻意的：先查非有限（NaN 会让后面的比较全都为假，症状是"整屏不画"），
-// 再查面积（共线/重合顶点会让 PlaneEq 无解）。
-inline bool buildTriangleGeometry(const Vec2 in[3], int targetWidth, int targetHeight,
-                                  TriangleGeom& out) {
+// 再查面积（共线/重合顶点会让 PlaneEq 无解），最后才查是否完全在目标外。
+inline GeomReject buildTriangleGeometryChecked(const Vec2 in[3], int targetWidth, int targetHeight,
+                                               TriangleGeom& out) {
     for (int i = 0; i < 3; ++i) {
-        if (!std::isfinite(in[i].x) || !std::isfinite(in[i].y)) return false;
+        if (!std::isfinite(in[i].x) || !std::isfinite(in[i].y)) return GeomReject::NonFinite;
     }
 
     out.v[0] = in[0];
@@ -35,7 +39,7 @@ inline bool buildTriangleGeometry(const Vec2 in[3], int targetWidth, int targetH
     out.v[2] = in[2];
 
     const float area2 = cross(in[1] - in[0], in[2] - in[0]);
-    if (!(std::fabs(area2) > 1e-6f)) return false;      // 退化：共线或重合
+    if (!(std::fabs(area2) > 1e-6f)) return GeomReject::Degenerate;   // 退化：共线或重合
     out.area2 = area2;
 
     out.edges[0] = EdgeFunc::fromEdge(in[0], in[1]);
@@ -55,7 +59,12 @@ inline bool buildTriangleGeometry(const Vec2 in[3], int targetWidth, int targetH
     r.y0 = static_cast<int>(std::floor(minY - 0.5f));
     r.y1 = static_cast<int>(std::ceil(maxY - 0.5f));
     out.extent = r.clampedTo(targetWidth, targetHeight);
-    return !out.extent.empty();
+    return out.extent.empty() ? GeomReject::Offscreen : GeomReject::None;
+}
+
+inline bool buildTriangleGeometry(const Vec2 in[3], int targetWidth, int targetHeight,
+                                  TriangleGeom& out) {
+    return buildTriangleGeometryChecked(in, targetWidth, targetHeight, out) == GeomReject::None;
 }
 
 // 逐像素回调。模板而不是 std::function：内层每个像素都要调用一次，

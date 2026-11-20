@@ -6,7 +6,7 @@
 #include "render/color.h"
 #include "render/plane_eq.h"
 #include "render/raster_scalar.h"
-#include "render/triangle_geom.h"
+#include "render/triangle_setup.h"
 #include "render/viewport.h"
 
 namespace sr {
@@ -34,10 +34,18 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
         ScreenVertex sv[3];
         for (int k = 0; k < 3; ++k) sv[k] = vp.project(cv[k]);
 
-        const Vec2 pos[3] = {sv[0].pos, sv[1].pos, sv[2].pos};
-        TriangleGeom geom;
-        if (!buildTriangleGeometry(pos, target.color.width, target.color.height, geom)) {
-            bump(stats, &FrameStats::trianglesDegenerate);
+        TriangleSetup setup;
+        SetupResult res;
+        if (!setupTriangle(sv, target.color, state.cull, TileGrid{}, setup, res)) {
+            // 拒绝原因分开计数：offscreen 是正常事件，degenerate/nonfinite 是上游有问题的信号。
+            // 把它们混成一个数会掩盖 bug（Task 2.4 的测试守住这条）。
+            switch (res.reason) {
+                case RejectReason::NonFinite:
+                case RejectReason::Degenerate: bump(stats, &FrameStats::trianglesDegenerate); break;
+                case RejectReason::Backface: bump(stats, &FrameStats::trianglesBackfaceCulled); break;
+                case RejectReason::Offscreen: bump(stats, &FrameStats::trianglesOffscreen); break;
+                default: bump(stats, &FrameStats::trianglesDegenerate); break;
+            }
             return;
         }
 
@@ -47,7 +55,7 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
         fi.v = sv[0].v;
         fi.depth = sv[0].depth;
         FragmentOutput fo;
-        forEachCoveredPixel(geom, [&](int x, int y) {
+        forEachCoveredPixel(setup.geom, [&](int x, int y) {
             bump(stats, &FrameStats::fragmentsCovered);
             fi.screen = Vec2{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
             if (state.fragmentShader != nullptr) {
