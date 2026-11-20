@@ -62,6 +62,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_render_target.cpp
     tests/unit/test_patterns.cpp
     tests/unit/test_bmp.cpp
+    src/app/cmdline.cpp
+    tests/unit/test_cmdline.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
