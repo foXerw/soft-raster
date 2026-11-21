@@ -1,6 +1,7 @@
 #include "render/raster_scalar.h"
 
 #include <cstdint>
+#include <cmath>
 #include <vector>
 
 #include "harness.h"
@@ -261,3 +262,48 @@ SR_TEST(raster_stats_accumulate_across_calls) {
     SR_ASSERT(s.pixelsWritten > afterFirst);
     SR_ASSERT_EQ(s.trianglesRejected, 0);
 }
+
+SR_TEST(shared_edge_leaves_no_gap_even_with_awkward_coordinates) {
+    // 这条测试是为了复现"立方体正面有一条点状对角缝"而写的，**它没有复现出来**：
+    // 直接读 yaw=0/pitch=0 那张图沿对角线的像素，颜色是连续的
+    // (#8983E6 → #E1E3E6，一路平滑，没有任何背景色混进来)。
+    // 所以我先前那句"C3 的修复可能还不完整"是错的，撤回。
+    // 测试仍然保留：它断言的是"贴着共享边的像素必须至少被一个三角形认领"这条真实不变式
+    // （根因本该是 `evaluate(p) == 0` 这个**精确比较**：
+    // 共享同一条边的两个三角形用相反的顶点顺序算边函数，实数域里 v_A = -v_B，
+    // 浮点域里差几个 ULP ⇒ 边界像素可以同时被判成"外侧"，谁都不认领 = 缝。
+    // 第一版这个测试检查的是"远离所有边的像素"，那当然不会有缝 —— 缝在边上，
+    // 所以必须专门检查**贴着共享边**的像素中心。
+    const sr::Vec2 q0{0.5f, 0.5f}, q1{10.3f, 0.7f}, q2{10.1f, 9.6f}, q3{0.7f, 9.4f};
+
+    Canvas c{16, 16};
+    const uint32_t colA = sr::encodeSRGB({1, 0, 0});
+    const uint32_t colB = sr::encodeSRGB({0, 0, 1});
+    const FlatTriangle A{{q0, q1, q2}, colA};
+    const FlatTriangle B{{q0, q2, q3}, colB};
+    sr::rasterizeFlatTriangle(c.rt.color, A);
+    sr::rasterizeFlatTriangle(c.rt.color, B);
+
+    // 共享边是 q0→q2。找出像素中心落在它附近（垂直距离 < 0.25 像素）
+    // 且投影落在线段内部的那些点：它们必须至少被一个三角形认领。
+    const sr::Vec2 e{q2.x - q0.x, q2.y - q0.y};
+    const float len = std::sqrt(e.x * e.x + e.y * e.y);
+    const sr::Vec2 unit{e.x / len, e.y / len};
+    int nearEdge = 0, gaps = 0;
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const sr::Vec2 p{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
+            const sr::Vec2 d{p.x - q0.x, p.y - q0.y};
+            const float along = d.x * unit.x + d.y * unit.y;
+            const float perp = std::fabs(-d.x * unit.y + d.y * unit.x);
+            if (along < 0.75f || along > len - 0.75f) continue;   // 线段之外不算
+            if (perp > 0.25f) continue;
+            ++nearEdge;
+            const uint32_t v = c.rt.color.readPacked(x, y);
+            if (v == kClear) ++gaps;
+        }
+    }
+    SR_ASSERT(nearEdge > 3);          // 构造必须真的产生贴着边的采样点
+    SR_ASSERT_EQ(gaps, 0);
+}
+
