@@ -45,20 +45,35 @@ namespace {
 
 const wchar_t* kWindowTitle = L"soft-raster — 纯 CPU 软件光栅化";
 
-constexpr float kTop = 0.06f;   // 一个"有得看"的渐变，用来确认像素真的在流动
-constexpr float kBottom = 0.85f;
+[[maybe_unused]] constexpr float kTop = 0.06f;   // 一个"有得看"的渐变，用来确认像素真的在流动
+[[maybe_unused]] constexpr float kBottom = 0.85f;
 
 // 渲染一整帧。M0 还没有任何 3D：能证明"像素从我们手里走到了屏幕"就够。
 // 从这里到 M2 之间唯一的变化是"这一帧的内容由谁产生"。
+bool g_gradientBackground = false;   // 由 --gradient 打开
 bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
 sr::DebugViewSink g_sink;       // 'V' 循环：color → depth → gray
+
+// 转台速度（弧度/秒）。0.6 ≈ 每秒 34°，一圈约 10 秒：慢到能看清形状，
+// 又快到让人觉得画面是活的。
+constexpr float kTurntableRadiansPerSecond = 0.6f;
+constexpr int kTargetFps = 60;
 
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
                  const sr::OrbitCamera& camera) {
     target.depth.clear();
-    const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
-    const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
-    sr::fillLinearGradient(target.color, a, b, phase);
+    // 背景从"全屏渐变填充"换成纯色 clear。
+    // 渐变是 M0 的验收物（当时除了它没有别的东西可画），但它每帧要做 width*height 次
+    // encodeSRGB + writePacked：实测 640x360 下整帧 29ms，其中大半是背景，
+    // 于是自动旋转只有 35fps —— 用户说的"不丝滑"其实主要是这件事，不是节流的锅。
+    // 现在画面本身在动，背景只需要把立方体衬出来。渐变仍可用 --gradient 打开。
+    if (g_gradientBackground) {
+        const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
+        const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
+        sr::fillLinearGradient(target.color, a, b, phase);
+    } else {
+        target.color.clear(sr::encodeSRGB({0.045f, 0.05f, 0.07f}));
+    }
 
     // M2 的可见成果：一个 MVP 变换的旋转立方体，面纯色，**故意不启用深度**。
     // 剔除开着时它是干净的（凸体 + 剔除已经解决了遮挡）；把 cull 关掉就能看到
@@ -128,6 +143,7 @@ int runGoldenWrite(const app::AppOptions& o) {
 }
 
 int runOffscreen(const app::AppOptions& o) {
+    g_gradientBackground = o.gradient;   // 离屏默认也走纯色，golden 场景自己决定背景
     auto surface = app::createOffscreenSurface(o.width, o.height);
     sr::RenderTarget& target = surface->target();
 
@@ -195,10 +211,16 @@ int runWindow(const app::AppOptions& o) {
 
     bool paused = false;
     float phase = 0.0f;
+    g_gradientBackground = o.gradient;
     sr::OrbitCamera camera;
     camera.yaw = o.yaw;
     camera.pitch = o.pitch;
     camera.distance = o.distance;
+    // 自动旋转在**没有拖拽**时进行；拖拽一次之后从新朝向接着转（不是回到原角度），
+    // 否则用户刚摆好的视角会被下一帧覆盖掉，那种"抢镜头"的观感非常差。
+    bool dragging = false;
+    double lastFrameSeconds = 1.0 / 60.0;
+    double frameBudgetMs = 1000.0 / static_cast<double>(kTargetFps);
     double lastMs = 0.0;
     double fpsPrintAccum = 0.0;
     int screenshotCounter = 0;
@@ -233,7 +255,13 @@ int runWindow(const app::AppOptions& o) {
         if (shouldRender) {
             // 鼠标：左键拖拽 = 轨道旋转，滚轮 = 推拉。暂停时不响应，
             // 这样"冻结当前帧再看细节"才成立（设计文档 C7）。
-            if (input.leftPressed) camera.orbit(input.dx, input.dy);
+            dragging = input.leftPressed;
+            if (dragging) {
+                camera.orbit(input.dx, input.dy);
+            } else {
+                // 与帧时间无关的角速度：掉帧时转速不变（否则慢帧会让物体看起来忽快忽慢）。
+                camera.yaw += kTurntableRadiansPerSecond * static_cast<float>(lastFrameSeconds * 1.0);
+            }
             if (input.wheel != 0.0f) camera.dolly(input.wheel);
 
             sr::Timer frameTimer;
@@ -243,7 +271,8 @@ int runWindow(const app::AppOptions& o) {
             std::snprintf(buf, sizeof(buf), "FPS %.1f  %.2f MS  %dx%d  YAW %.2f PITCH %.2f DIST %.1f%s",
                           fpsNow, lastMs, o.width, o.height, static_cast<double>(camera.yaw),
                           static_cast<double>(camera.pitch), static_cast<double>(camera.distance),
-                          paused ? "  PAUSED" : "");
+                          paused ? (dragging ? "  PAUSED DRAG" : "  PAUSED")
+                                 : (dragging ? "  DRAG" : ""));
             renderFrame(target, phase, buf, camera);
             // 与帧时间相关：掉帧时动画速度不变（float 累加，所以乘的是 float）。
             phase += static_cast<float>(0.35 * lastMs * 0.001);
@@ -257,10 +286,14 @@ int runWindow(const app::AppOptions& o) {
             surface->present(err);
         }
 
+        // 一帧的总耗时在这里结算一次，节流与 FPS 打印都用它（分两次读会把时间吃掉一段）。
+        const double elapsed = clock.lapMs();
+        lastFrameSeconds = elapsed * 0.001;
+
         ++renderedFrames;
         if (o.autoClose > 0 && renderedFrames >= o.autoClose) break;
 
-        fpsPrintAccum += clock.lapMs();
+        fpsPrintAccum += elapsed;
         if (fpsPrintAccum >= 500.0) {
             const double fps = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
             std::printf("[frame] %.2f ms  %.1f fps  phase=%.3f%s\n", lastMs, fps, phase,
@@ -268,9 +301,13 @@ int runWindow(const app::AppOptions& o) {
             fpsPrintAccum = 0.0;
         }
 
-        // 不给一点喘息的话，这个循环会把一个核占满并且消息队列永远非空，
-        // 于是 Windows 会认为窗口无响应。M8 之后由帧率上限取代这一行。
-        Sleep(1);
+        // 帧率节流。原先是固定的 Sleep(1)：Windows 的 Sleep 粒度约 1~15ms，
+        // 于是每一帧的耗时被随机拉长，动画看起来就是"不丝滑"——不是慢，是抖。
+        // 现在按剩余预算睡到下一帧；睡不够就不睡（宁可掉一帧也不要累积延迟）。
+        const double remaining = frameBudgetMs - elapsed;
+        if (remaining > 1.0) {
+            Sleep(static_cast<DWORD>(remaining));
+        }
     }
     return 0;
 }

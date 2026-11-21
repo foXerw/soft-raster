@@ -20,6 +20,7 @@ struct AppOptions {
     float yaw = 0.0f;
     float pitch = 0.35f;
     float distance = 5.0f;   // 轨道相机的初值（离屏渲染要确定性，所以必须能从命令行给）
+    bool gradient = false;   // 背景用 M0 的全屏渐变（默认纯色 clear，因为渐变要吃掉一半帧预算）
     bool noFit = false;
     std::string goldenWrite;   // 非空 = 渲染 golden 场景并写到这个路径
     bool help = false;
