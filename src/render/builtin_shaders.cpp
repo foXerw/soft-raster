@@ -28,4 +28,17 @@ bool vertexColorFS(const FragmentInput& in, const FragmentUniforms&, FragmentOut
     return true;
 }
 
+bool texturedFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out) {
+    if (u.texture == nullptr) {
+        out.color = u.baseColor;
+        return true;
+    }
+    // uv 已经是透视正确插值的结果（M3 的 attr/w 那一套），所以贴图在斜视角下不会扭曲 ——
+    // 那正是 spec §8 M4 行"旋转不扭曲"的含义。
+    // gradU/gradV 直接来自 TriangleSetup 的 dudx/dudy/dvdx/dvdy（见 pipeline.h 的 Ruling B）。
+    const TexelF c = sample(*u.texture, u.sampler, in.v.uv.x, in.v.uv.y, in.gradU, in.gradV);
+    out.color = LinearColor{c.r * u.baseColor.r, c.g * u.baseColor.g, c.b * u.baseColor.b};
+    return true;
+}
+
 }  // namespace sr

@@ -18,4 +18,10 @@ bool flatColorFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOut
 // M2 用它做"每个面一个颜色"，M3 用它做平滑渐变。
 bool vertexColorFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
 
+// 纹理采样：用插值后的 uv 取纹素，再乘 baseColor 当材质 tint。
+// 乘法发生在线性空间（TexelF 已在采样时解码，baseColor 本来就是线性的），
+// 所以这一步不会引入 gamma 错误 —— 这是 Review Focus 5 的第二处翻转点之后的第一处运算。
+// u.texture == nullptr 时退回 baseColor（见 pipeline.h 的理由）。
+bool texturedFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
+
 }  // namespace sr

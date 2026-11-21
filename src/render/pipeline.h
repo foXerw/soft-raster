@@ -5,6 +5,7 @@
 #include "math/mat.h"
 #include "render/color.h"
 #include "render/render_target.h"
+#include "render/sampler.h"
 #include "render/stats.h"
 #include "render/vertex.h"
 
@@ -33,9 +34,15 @@ struct VertexUniforms {
     Mat4 normalMatrix;  // transpose(inverse(model)) 的 3x3 部分，M6 的法线变换用
 };
 
-// M4/M6 会往这里加 texture 指针与光源；M2 阶段只有基础色。
+// M6 会往这里加光源。M4 加了纹理与采样状态（Ruling A：不放 PipelineState，
+// 因为那里剩下的字段全是固定功能阶段读的，采样是 FS 的事）。
 struct FragmentUniforms {
     LinearColor baseColor{0.8f, 0.8f, 0.8f};
+    // nullptr = 这张 draw call 没有贴图，texturedFS 退回 baseColor。
+    // 选"退回纯色"而不是"崩掉/画黑"：忘了设纹理时你会看到一块纯色，
+    // 于是能立刻知道是纹理没接上；画黑的话，第一个怀疑对象会变成整条管线。
+    const Texture* texture = nullptr;
+    SamplerState sampler;
 };
 
 struct FragmentInput {
