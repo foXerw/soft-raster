@@ -94,6 +94,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_input.cpp
     tests/unit/test_texture.cpp
     tests/unit/test_sampler.cpp
+    tests/unit/test_sampler_bilinear.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp

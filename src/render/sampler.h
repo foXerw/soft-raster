@@ -36,4 +36,9 @@ int texelIndex(float u, int count, WrapMode wrap);
 // level 0 上的最近邻采样。越界/空纹理返回全 0（有定义的值）。
 TexelF sampleNearest(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v);
 
+// level 0 上的双线性采样。**插值发生在线性空间**：先把四个 taps 各自解码到线性再加权，
+// 反过来（先加权后解码）会让中间调整体偏亮，spec §7.3 的"线性空间着色"从这一步就开始生效。
+// 权重用的是"距左/下那个 tap 的比例"：centered = u*W - 0.5，f = centered - floor(centered)。
+TexelF sampleBilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v);
+
 }  // namespace sr
