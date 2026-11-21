@@ -90,25 +90,46 @@ int lowerTap(float centered, int count, WrapMode wrap, float& frac) {
 
 }  // namespace
 
-TexelF sampleNearest(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v) {
-    return toTexelF(t, t.texel(0, texelIndex(u, t.width, wrapU), texelIndex(v, t.height, wrapV)));
+namespace {
+
+// 某一级的宽高。级别不存在时返回 0，于是下游的下标计算全部走 count<=0 的兜底分支。
+void levelSize(const Texture& t, int level, int& w, int& h) {
+    if (level < 0 || level >= t.levelCount()) {
+        w = 0;
+        h = 0;
+        return;
+    }
+    w = t.levels[static_cast<size_t>(level)].width;
+    h = t.levels[static_cast<size_t>(level)].height;
 }
 
-TexelF sampleBilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v) {
+}  // namespace
+
+TexelF sampleNearestLevel(const Texture& t, int level, WrapMode wrapU, WrapMode wrapV, float u,
+                          float v) {
+    int w = 0, h = 0;
+    levelSize(t, level, w, h);   // 用**该级**的宽高做索引：每级减半，用 level 0 的会把贴图放大两倍
+    return toTexelF(t, t.texel(level, texelIndex(u, w, wrapU), texelIndex(v, h, wrapV)));
+}
+
+TexelF sampleBilinearLevel(const Texture& t, int level, WrapMode wrapU, WrapMode wrapV, float u,
+                           float v) {
+    int w = 0, h = 0;
+    levelSize(t, level, w, h);
     float fu = 0.0f, fv = 0.0f;
-    const int x0 = lowerTap(u * static_cast<float>(t.width) - 0.5f, t.width, wrapU, fu);
-    const int y0 = lowerTap(v * static_cast<float>(t.height) - 0.5f, t.height, wrapV, fv);
+    const int x0 = lowerTap(u * static_cast<float>(w) - 0.5f, w, wrapU, fu);
+    const int y0 = lowerTap(v * static_cast<float>(h) - 0.5f, h, wrapV, fv);
     // 两个 tap 各自过一遍 wrapCoord：Repeat 下 x0 已经在范围内（这步是恒等），
     // ClampEdge 下它可能是 -1 或 count（这步把它钳回边界）。
-    const int xa = wrapCoord(x0, t.width, wrapU);
-    const int xb = wrapCoord(x0 + 1, t.width, wrapU);
-    const int ya = wrapCoord(y0, t.height, wrapV);
-    const int yb = wrapCoord(y0 + 1, t.height, wrapV);
+    const int xa = wrapCoord(x0, w, wrapU);
+    const int xb = wrapCoord(x0 + 1, w, wrapU);
+    const int ya = wrapCoord(y0, h, wrapV);
+    const int yb = wrapCoord(y0 + 1, h, wrapV);
 
-    const TexelF c00 = toTexelF(t, t.texel(0, xa, ya));
-    const TexelF c10 = toTexelF(t, t.texel(0, xb, ya));
-    const TexelF c01 = toTexelF(t, t.texel(0, xa, yb));
-    const TexelF c11 = toTexelF(t, t.texel(0, xb, yb));
+    const TexelF c00 = toTexelF(t, t.texel(level, xa, ya));
+    const TexelF c10 = toTexelF(t, t.texel(level, xb, ya));
+    const TexelF c01 = toTexelF(t, t.texel(level, xa, yb));
+    const TexelF c11 = toTexelF(t, t.texel(level, xb, yb));
 
     const float w00 = (1.0f - fu) * (1.0f - fv), w10 = fu * (1.0f - fv);
     const float w01 = (1.0f - fu) * fv, w11 = fu * fv;
@@ -118,6 +139,56 @@ TexelF sampleBilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u,
     out.b = w00 * c00.b + w10 * c10.b + w01 * c01.b + w11 * c11.b;
     out.a = w00 * c00.a + w10 * c10.a + w01 * c01.a + w11 * c11.a;
     return out;
+}
+
+TexelF sampleNearest(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v) {
+    return sampleNearestLevel(t, 0, wrapU, wrapV, u, v);
+}
+
+TexelF sampleBilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v) {
+    return sampleBilinearLevel(t, 0, wrapU, wrapV, u, v);
+}
+
+Lod lodFromGradients(float texelsU, float texelsV, int levelCount, Vec2 gradU, Vec2 gradV) {
+    // gradU = (∂u/∂x, ∂u/∂y)、gradV = (∂v/∂x, ∂v/∂y)；标量版的顺序是
+    // (∂u/∂x, ∂v/∂x, ∂u/∂y, ∂v/∂y) —— 转置只在这一行发生，别处不必再想一遍。
+    return lodFromDerivatives(texelsU, texelsV, levelCount, gradU.x, gradV.x, gradU.y, gradV.y);
+}
+
+TexelF sampleTrilinearLevel(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v,
+                            const Lod& lod) {
+    const TexelF lo = sampleBilinearLevel(t, lod.level, wrapU, wrapV, u, v);
+    if (lod.frac <= 0.0f) return lo;   // 没有下一级可混（含 useMip=false 与末级两种情况）
+    const TexelF hi = sampleBilinearLevel(t, lod.level + 1, wrapU, wrapV, u, v);
+    const float f = lod.frac;
+    TexelF out;
+    out.r = lo.r + f * (hi.r - lo.r);
+    out.g = lo.g + f * (hi.g - lo.g);
+    out.b = lo.b + f * (hi.b - lo.b);
+    out.a = lo.a + f * (hi.a - lo.a);
+    return out;
+}
+
+TexelF sampleTrilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v,
+                       Vec2 gradU, Vec2 gradV) {
+    const Lod lod = lodFromGradients(static_cast<float>(t.width), static_cast<float>(t.height),
+                                     t.levelCount(), gradU, gradV);
+    return sampleTrilinearLevel(t, wrapU, wrapV, u, v, lod);
+}
+
+TexelF sample(const Texture& t, const SamplerState& s, float u, float v, Vec2 gradU, Vec2 gradV) {
+    Lod lod;   // useMip=false ⇒ 停在 {0,0}，三种 filter 都只看 level 0
+    if (s.useMip) {
+        lod = lodFromGradients(static_cast<float>(t.width), static_cast<float>(t.height),
+                               t.levelCount(), gradU, gradV);
+    }
+    switch (s.filter) {
+        case FilterMode::Nearest: return sampleNearestLevel(t, lod.level, s.wrapU, s.wrapV, u, v);
+        case FilterMode::Bilinear:
+            return sampleBilinearLevel(t, lod.level, s.wrapU, s.wrapV, u, v);
+        case FilterMode::Trilinear:
+        default: return sampleTrilinearLevel(t, s.wrapU, s.wrapV, u, v, lod);
+    }
 }
 
 }  // namespace sr

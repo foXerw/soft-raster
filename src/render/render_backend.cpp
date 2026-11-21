@@ -77,8 +77,9 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
             fi.screen = Vec2{px, py};
             fi.depth = ip.depth;
             fi.v = ip.v;
-            fi.uvDerivX = Vec2{setup.dudx, setup.dudy};
-            fi.uvDerivY = Vec2{setup.dvdx, setup.dvdy};
+            // 每个标量场一个梯度向量（不是"沿 X / 沿 Y"），命名理由见 pipeline.h 的 FragmentInput。
+            fi.gradU = Vec2{setup.dudx, setup.dudy};
+            fi.gradV = Vec2{setup.dvdx, setup.dvdy};
             if (state.fragmentShader != nullptr) {
                 if (!state.fragmentShader(fi, state.fu, fo)) return;   // discard
             } else {

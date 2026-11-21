@@ -39,11 +39,16 @@ struct FragmentUniforms {
 };
 
 struct FragmentInput {
-    Vec2 screen;     // 像素坐标（top-down）
+    Vec2 screen;   // 像素坐标（top-down）
     float depth = 0.0f;
-    Varyings v;      // M3 之前是"三角形第一个顶点的值"（flat shading）
-    Vec2 uvDerivX;   // M4 的 mipmap 选择用；M2 阶段为 0
-    Vec2 uvDerivY;
+    Varyings v;    // M3 之前是"三角形第一个顶点的值"（flat shading）
+    // uv 的屏幕梯度，**每个标量场一个向量**：gradU = (∂u/∂x, ∂u/∂y)、gradV = (∂v/∂x, ∂v/∂y)。
+    // 名字里刻意不写 X/Y：这两个字段一度叫 uvDerivX / uvDerivY，读起来像"沿 X 的导数、沿 Y 的
+    // 导数"，而 mipLevelFromDerivatives 的参数顺序是 (∂u/∂x, ∂v/∂x, ∂u/∂y, ∂v/∂y) —— 两者差一次
+    // **转置**。填错的后果不是崩溃也不是黑屏，只是"mip 选错、画面糊或者闪"，最难归因。
+    // 现在唯一的入口收 Vec2 gradU, gradV，按位置传错四个 float 的机会没有了。
+    Vec2 gradU;
+    Vec2 gradV;
 };
 
 struct FragmentOutput {

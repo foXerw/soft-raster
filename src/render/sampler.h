@@ -6,6 +6,7 @@
 // 一旦在两处各写一遍，就会有一处悄悄漂一半 —— 症状不是崩溃，是整张贴图偏移半个纹素。
 #include <cstdint>
 
+#include "math/vec.h"
 #include "render/texture.h"
 
 namespace sr {
@@ -24,6 +25,23 @@ struct TexelF {
     float r{}, g{}, b{}, a{};
 };
 
+enum class FilterMode : uint8_t {
+    Nearest,     // 取单个纹素（放大时的"像素艺术"效果）
+    Bilinear,    // 四个纹素加权
+    Trilinear,   // 两个 mip 级各做 bilinear 再按 frac 混合
+};
+
+// 过滤方式与 mip 开关是**两个正交的旋钮**：spec §7.6 的按键表把它们分开列
+// （"mip 开关"与"采样模式"），所以 useMip=false + Trilinear 是个合法组合
+// —— 语义是"仍按 frac 混，但永远在 level 0"，实测就是 Lod{0,0}，即退回 bilinear。
+// 反过来 Nearest + useMip=true 表示"在被选中的那一级上取单个纹素"，不是永远 level 0。
+struct SamplerState {
+    WrapMode wrapU = WrapMode::Repeat;
+    WrapMode wrapV = WrapMode::Repeat;
+    FilterMode filter = FilterMode::Trilinear;
+    bool useMip = true;
+};
+
 // 整数下标的 wrap。count <= 0 时返回 0（调用方随后会从 texel() 拿到 nullptr 走兜底分支）。
 // Repeat 必须自己把负数掰正：C++ 的 % 向零取整，-1 % 4 == -1，直接当索引就是越界读。
 int wrapCoord(int i, int count, WrapMode wrap);
@@ -40,5 +58,26 @@ TexelF sampleNearest(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, 
 // 反过来（先加权后解码）会让中间调整体偏亮，spec §7.3 的"线性空间着色"从这一步就开始生效。
 // 权重用的是"距左/下那个 tap 的比例"：centered = u*W - 0.5，f = centered - floor(centered)。
 TexelF sampleBilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v);
+
+// 指定 mip 级别的版本。**索引用该级自己的宽高**，不是 level 0 的：每级宽高减半，
+// 拿 level 0 的 W 去算 level 1 的下标会把采样位置整体放大两倍（症状是贴图错位 + 莫名地模糊）。
+// 级别不存在时返回全 0（有定义的值），与空纹理走同一条兜底。
+TexelF sampleNearestLevel(const Texture& t, int level, WrapMode wrapU, WrapMode wrapV, float u,
+                          float v);
+TexelF sampleBilinearLevel(const Texture& t, int level, WrapMode wrapU, WrapMode wrapV, float u,
+                           float v);
+
+// LOD 的 Vec2 入口：gradU = (∂u/∂x, ∂u/∂y)、gradV = (∂v/∂x, ∂v/∂y)，
+// 与 FragmentInput::gradU/gradV 同形状 ⇒ 调用方没有机会把四个 float 按位置传反（Ruling B）。
+Lod lodFromGradients(float texelsU, float texelsV, int levelCount, Vec2 gradU, Vec2 gradV);
+
+// 三线性：level 与 level+1 各做一次 bilinear，再按 lod.frac 混合。
+TexelF sampleTrilinearLevel(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v,
+                            const Lod& lod);
+TexelF sampleTrilinear(const Texture& t, WrapMode wrapU, WrapMode wrapV, float u, float v,
+                       Vec2 gradU, Vec2 gradV);
+
+// 统一入口（FS 只用这一个）：先定 LOD，再按 FilterMode 分派。
+TexelF sample(const Texture& t, const SamplerState& s, float u, float v, Vec2 gradU, Vec2 gradV);
 
 }  // namespace sr

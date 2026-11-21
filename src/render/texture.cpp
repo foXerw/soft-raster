@@ -74,8 +74,10 @@ std::vector<ImageRGBA8> generateMipChain(const ImageRGBA8& base) {
     return chain;
 }
 
-int mipLevelFromDerivatives(float texelsU, float texelsV, int levelCount, float dUdx, float dVdx,
-                            float dUdy, float dVdy) {
+Lod lodFromDerivatives(float texelsU, float texelsV, int levelCount, float dUdx, float dVdx,
+                       float dUdy, float dVdy) {
+    Lod out;
+    if (levelCount <= 0) return out;      // 空纹理：没有级可选，也别让调用方拿去索引
     // 各向异性时取 max 而不是 sqrt(乘积)：后者是"几何平均"，会在一个方向跨得很远时
     // 选到太高的分辨率，症状是某个方向仍然闪烁。真正的各向异性过滤（M11 之外）才需要
     // 沿方向多次采样，这里做的是 GPU 默认行为。
@@ -85,11 +87,27 @@ int mipLevelFromDerivatives(float texelsU, float texelsV, int levelCount, float 
     const float rhoX = std::sqrt(ux * ux + uy * uy);
     const float rhoY = std::sqrt(vx * vx + vy * vy);
     const float rho = std::max(rhoX, rhoY);
-    if (!(rho > 1.0f)) return 0;         // 被放大：用最高分辨率层，绝不返回负数。NaN 也走这一支
-    int level = static_cast<int>(std::floor(std::log2(rho)));
-    if (level < 0) level = 0;            // rho 是 inf 时 float→int 是垃圾值，靠这一行兜住
-    if (levelCount > 0 && level > levelCount - 1) level = levelCount - 1;
-    return level;
+    if (!(rho > 1.0f)) return out;        // 被放大：level 0、frac 0。NaN 也走这一支
+    const float l = std::log2(rho);
+    if (!std::isfinite(l)) {              // rho = inf：直接给末级，不去做 UB 的转换
+        out.level = levelCount - 1;
+        return out;
+    }
+    int level = static_cast<int>(std::floor(l));
+    if (level < 0) level = 0;
+    if (level >= levelCount) {
+        // 夹到末级 ⇒ **没有下一级可混**，frac 必须归零，否则三线性会去读 levels[levelCount]
+        out.level = levelCount - 1;
+        return out;
+    }
+    out.level = level;
+    out.frac = l - static_cast<float>(level);
+    return out;
+}
+
+int mipLevelFromDerivatives(float texelsU, float texelsV, int levelCount, float dUdx, float dVdx,
+                            float dUdy, float dVdy) {
+    return lodFromDerivatives(texelsU, texelsV, levelCount, dUdx, dVdx, dUdy, dVdy).level;
 }
 
 }  // namespace sr
