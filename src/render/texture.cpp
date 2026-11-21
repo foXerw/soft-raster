@@ -130,7 +130,14 @@ Lod lodFromDerivatives(float texelsU, float texelsV, int levelCount, float dUdx,
     }
     int level = static_cast<int>(std::floor(l));
     if (level < 0) level = 0;
-    if (level >= levelCount) {
+    // 界是 `levelCount - 1` 而不是 `levelCount`。差一格的代价是可见的：
+    // rho ∈ [2^(n-1), 2^n) 时 level 已经是末级 n-1，但 frac 还有 0.58 ——
+    // 三线性会去混 levels[n]，那一级的四个 tap 全是 nullptr ⇒ 0，于是画面**朝黑色混**：
+    // 症状是"把相机拉远时物体慢慢变黑"，而不是停在末级的平均色。
+    // 终审抓到的就是这一格（`Final: fixed`），而当时盯着这条不变式的测试恰好因为
+    // rho 取在 2^(n-1)（log2 是整数 ⇒ frac=0）与远超末级（走这条分支本来就归零）上，
+    // 对这个开区间完全失明。
+    if (level >= levelCount - 1) {
         // 夹到末级 ⇒ **没有下一级可混**，frac 必须归零，否则三线性会去读 levels[levelCount]
         out.level = levelCount - 1;
         return out;

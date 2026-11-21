@@ -21,6 +21,20 @@ std::string fail(const std::string& path, const std::string& why) {
 
 }  // namespace
 
+bool tgaPayloadFits(int w, int h, int bytesPP, bool rle, size_t available) {
+    if (w <= 0 || h <= 0 || bytesPP <= 0) return false;
+    const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
+    const size_t bpp = static_cast<size_t>(bytesPP);
+    // 两处都用**除法**问，不用乘法算出"需要多少字节"再比较：
+    // 65535x65535x4 在 32 位 size_t 上会回绕成小数，于是"放不下"被判成"放得下" ——
+    // 而那正是这个守卫唯一要防的事。
+    if (!rle) return pixelCount <= available / bpp;
+    // RLE 的下界：每包最多 128 个像素 ⇒ 包数 >= ceil(pixelCount/128)；
+    // 每包最少 1 字节包头 + 1 个像素（run 包）= 1 + bpp 字节。
+    const size_t packets = (pixelCount + 127u) / 128u;
+    return available / (1u + bpp) >= packets;
+}
+
 bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& err) {
     out = ImageRGBA8{};
     err.clear();
@@ -69,12 +83,22 @@ bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& er
     }
 
     const size_t pixelCount = static_cast<size_t>(w) * static_cast<size_t>(h);
-    if (!rle) {                                        // 未压缩：整块像素数据必须在文件里
-        if (pixelCount > (size - at) / static_cast<size_t>(bytesPP)) {
-            err = fail("", "像素数据不足：需要 " + std::to_string(pixelCount * bytesPP) +
-                               " 字节，只有 " + std::to_string(size - at));
-            return false;
+    // **先问再分配**（两条分支都问）。以前只有未压缩分支检查，于是 RLE 分支会先
+    // `assign(pixelCount*4)` 再决定拒绝：一个 18 字节的头声称 65535x65535 就能换走
+    // 16 GiB 的分配请求（终审抓到的；M5 要载入网上下载的图片，那时这是真的攻击面）。
+    if (!tgaPayloadFits(w, h, bytesPP, rle, size - at)) {
+        // 消息里的数字只做展示，所以允许饱和；判断本身在上面用除法做，不会回绕。
+        size_t need = 0;
+        if (rle) {
+            need = ((pixelCount + 127u) / 128u) * (1u + static_cast<size_t>(bytesPP));
+        } else if (pixelCount > SIZE_MAX / static_cast<size_t>(bytesPP)) {
+            need = SIZE_MAX;
+        } else {
+            need = pixelCount * static_cast<size_t>(bytesPP);
         }
+        err = fail("", "像素数据不足：至少需要 " + std::to_string(need) + " 字节，只有 " +
+                           std::to_string(size - at));
+        return false;
     }
 
     out.width = w;

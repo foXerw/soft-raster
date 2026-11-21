@@ -40,6 +40,42 @@ bool hasBytes(const sr::ImageRGBA8& img, int n) {
 
 }  // namespace
 
+SR_TEST(tga_payload_guard_is_a_pure_predicate_with_exact_boundaries) {
+    // 这个守卫存在的理由：**分配必须发生在检查之后**。RLE 分支以前只检查了未压缩的长度，
+    // 于是一个 18 字节的头声称 65535x65535 就能让解析器先 assign 16 GiB 再决定拒绝
+    // （终审抓到；M5 要载入网上下载的图片，那时它就是真的攻击面）。
+    // 抽成纯函数是因为"边界恰好够/恰好差一字节"这种事只有直接问才测得准
+    // —— 走 parseTga 的话，两种失败都给 false，只是消息不同。
+    SR_ASSERT(sr::tgaPayloadFits(2, 2, 3, false, 12));        // 未压缩：正好 4*3
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(2, 2, 3, false, 11));
+    // RLE 最省的编码是每包 128 个像素，每包至少 1 + bytesPP 字节（run 包）
+    SR_ASSERT(sr::tgaPayloadFits(128, 1, 4, true, 5));
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(128, 1, 4, true, 4));
+    SR_ASSERT(sr::tgaPayloadFits(129, 1, 4, true, 10));       // 两个包
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(129, 1, 4, true, 9));
+    // 非法输入 ⇒ false，而不是"随便给个数"
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(0, 4, 3, true, 1000));
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(4, 4, 0, true, 1000));
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(-1, 4, 3, false, 1000));
+    // 尺寸大到乘集会回绕时也必须说"放不下"（这里靠除法而不是乘法来问，见实现）
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(65535, 65535, 4, false, 1024));
+    SR_ASSERT_FALSE(sr::tgaPayloadFits(65535, 65535, 4, true, 0));
+    SR_ASSERT(sr::tgaPayloadFits(65535, 65535, 4, true, 1u << 30));   // 16 GiB 像素 ⇒ 至少 ~134 MB 包
+}
+
+SR_TEST(tga_rle_huge_claim_is_rejected_before_allocating) {
+    // 行为侧的同一条：错误消息必须来自**分配之前**的那个分支，
+    // 而不是循环里读到一半的"被截断"（后者意味着已经分配过了）。
+    std::vector<uint8_t> d = header(10, 2048, 2048, 32, 0x20);   // 18 字节，没有任何像素数据
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT_FALSE(parse(d, img, err));
+    SR_ASSERT_FALSE(err.empty());
+    if (err.find("像素数据不足") == std::string::npos) std::printf("[tga] 错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("像素数据不足") != std::string::npos);
+    SR_ASSERT_EQ(img.rgba.size(), 0u);
+}
+
 SR_TEST(tga_24bit_bottom_up_storage_becomes_top_down) {
     // 2x2，type 2（未压缩 truecolor），descriptor = 0 ⇒ **行自底向上存储**（TGA 的默认）。
     // 输出要求 top-down（C8），所以文件里的第一行必须落到输出的**最后一行**。

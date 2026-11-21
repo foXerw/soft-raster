@@ -184,6 +184,14 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
         return p.fail("多余参数 '" + a + "'（这个程序只接受选项，不接受位置参数）");
     }
 
+    // 两个 golden 入口同时给 ⇒ 拒绝。放在循环**之后**而不是分支里，是因为这里要判的是
+    // "两个都非空"这个整体形状：写在分支里就得依赖参数顺序（先看到谁就赢），
+    // 而那正是我们要消灭的东西 —— 静默忽略第二个入口的症状是"我以为两张都刷新了"。
+    if (!out.goldenWrite.empty() && !out.goldenWriteTextured.empty()) {
+        return p.fail("--golden-write 与 --golden-write-textured 不能同时给"
+                      "（一次只刷一张参考图；两张都要就分两次跑）");
+    }
+
     // 离屏模式没给 --out 时给一个默认名：这样 `--bench 60` 这类纯测量的调用
     // 不会因为没有输出文件而报错，也不会有人误以为"没写 --out 就会弹窗"。
     if (out.offscreen && out.out.empty()) out.out = "out.bmp";

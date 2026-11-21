@@ -229,6 +229,24 @@ SR_TEST(cmdline_golden_write_textured_is_a_separate_entry) {
     SR_ASSERT_EQ(o.frames, 1);          // 也没有顺手改掉帧数
 }
 
+SR_TEST(cmdline_rejects_two_golden_entries_together) {
+    // 同时给两个入口时，"先检查谁"决定写哪张图 —— 于是第二个被**静默忽略**：
+    // 用户以为两张都刷新了，实际只有一张变了。这与 Ruling 38 守的是同一个坑
+    // （golden 相关的故障都不该有"看起来一切正常"这条路径），所以宁可拒绝。
+    Args a{{"--golden-write", "a.bmp", "--golden-write-textured", "b.bmp"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    if (err.find("golden") == std::string::npos) std::printf("[cmdline] 错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("golden") != std::string::npos);
+    // 顺序反过来也必须拒绝（否则"先写谁"又变成参数顺序的事）
+    Args b{{"--golden-write-textured", "b.bmp", "--golden-write", "a.bmp"}};
+    parse(b, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("golden") != std::string::npos);
+}
+
 SR_TEST(cmdline_rejects_golden_write_textured_without_a_path) {
     Args a{{"--golden-write-textured"}};
     bool ok = false;

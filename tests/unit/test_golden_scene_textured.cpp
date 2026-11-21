@@ -248,7 +248,7 @@ SR_TEST(textured_frame_carries_the_checker_over_a_wide_swatch_not_one_lucky_pixe
 SR_TEST(the_texture_reads_right_side_up_on_screen) {
     // 全栈 top-down 的**屏幕侧**保证（Ruling 42）：uv(0,0) 那一格（红标记）必须出现在
     // uv(0,1) 那一格（蓝标记）的**上方**，而 uv(1,0)（绿标记）在红的**右方**。
-    // 与 test_mesh 的 cube_side_faces_put_uv_v_zero_at_the_top_edge 是一对：
+    // 与 test_mesh 的 cube_uv_follows_each_faces_own_up_and_right 是一对：
     // 那条管生成器，这条管"最终画面上读起来对不对"。
     //
     // 三条分类断言不是重复 marker_lands：它们保证这个"上下左右"的比较**不是空的** ——

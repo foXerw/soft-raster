@@ -61,14 +61,45 @@ SR_TEST(lod_level_and_fraction_split_the_log2_distance) {
 SR_TEST(lod_clamps_so_the_next_level_always_exists) {
     // 三线性要读 level 与 level+1，所以"夹到末级"必须**同时把 frac 归零**：
     // 只夹 level 的话 frac 还是 0.7，就会去读那并不存在的第 4 级（症状是崩溃或读到垃圾）。
+    //
+    // rho 的取值是终审时改过的，原因值得记：原来只有 {4, 1000, 1e20}，而
+    //   4 = 2^(n-1) 恰好让 log2 落在整数上 ⇒ frac = 0（走不到"末级还带 frac"的形状），
+    //   1000 与 1e20 越过 level >= levelCount ⇒ 走的是另一条（本来就把 frac 归零的）分支。
+    // 于是这条**盯着自己那条不变式**的测试对"末端带"完全失明 —— 与 M4.4 记的
+    // "rho=64 让 log2 正好是整数 6、变异完全隐形"是同一族，这次瞎的是守门测试本身。
+    // 现在补上 (2^(n-1), 2^n) 开区间里的两个点：5 与 6。
     const sr::Texture t = strip4();
-    const int n = t.levelCount();
-    for (const float rho : {4.0f, 1000.0f, 1e20f}) {
+    const int n = t.levelCount();          // 3 ⇒ 末端带是 rho ∈ (4, 8)
+    SR_ASSERT_EQ(n, 3);
+    for (const float rho : {4.0f, 5.0f, 6.0f, 7.9f, 1000.0f, 1e20f}) {
         const sr::Lod l = sr::lodFromGradients(4.0f, 1.0f, n, gradUFor(rho), sr::Vec2{0.0f, 0.0f});
         SR_ASSERT_EQ(l.level, n - 1);
+        if (l.frac != 0.0f) std::printf("[lod] rho=%.1f 给出 frac=%f（末级不该有 frac）\n",
+                                         static_cast<double>(rho), static_cast<double>(l.frac));
         SR_ASSERT_NEAR(l.frac, 0.0f, 1e-6f);
         SR_ASSERT(l.level + 1 < n || l.frac == 0.0f);   // 这个不变式是三线性不越界的全部依据
     }
+}
+
+SR_TEST(trilinear_in_the_tail_band_stays_at_the_last_level) {
+    // 上一条管的是 Lod 的形状，这条管**画面**：末端带里若带着 frac 去混不存在的下一级，
+    // 那一级的四个 tap 全是 nullptr ⇒ 0，于是混合是"朝黑色混过去"。
+    // strip4 的末级是 1x1 的 128 ⇒ 线性 0.50196；实测（修之前）rho=6 时给 0.2083。
+    // 症状不是崩溃也不是黑屏，而是"把相机拉远时物体慢慢变黑" —— 最难归因的一类。
+    const sr::Texture t = strip4();
+    const int n = t.levelCount();
+    const float u = 0.125f;   // 第 0 个纹素中心；末级是 1x1，任何 u 都给同一个数
+    const sr::Vec2 g6 = gradUFor(6.0f);
+    const sr::Vec2 zero{0.0f, 0.0f};
+
+    const sr::TexelF last = sr::sampleBilinearLevel(t, n - 1, WrapMode::ClampEdge,
+                                                   WrapMode::ClampEdge, u, 0.5f);
+    const sr::TexelF tri = sr::sampleTrilinear(t, WrapMode::ClampEdge, WrapMode::ClampEdge, u, 0.5f,
+                                               g6, zero);
+    SR_ASSERT_NEAR(red(tri), red(last), 1e-6f);
+    SR_ASSERT_NEAR(red(tri), 128.0f / 255.0f, 1e-4f);
+    // "等于 last"若两边一起坏成 0 也算过，所以再钉一条绝对下限。
+    SR_ASSERT(red(tri) > 0.4f);
 }
 
 SR_TEST(lod_from_gradients_maps_each_component_to_its_own_axis) {

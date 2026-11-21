@@ -108,20 +108,36 @@ SR_TEST(no_symmetry_of_the_square_preserves_the_image) {
     const int cellPx = 8;
     const sr::ImageRGBA8 img = sr::makeCheckerImage(4, cellPx, kPal);
     const int oneCell = cellPx * cellPx;
+    // 正方形的对称群有 8 个元素，恒等那个不必查，所以**这里必须正好 7 条**：
+    // 名字承诺"没有任何对称保持这张图"，只查 4 条就是名字比断言大
+    // （终审点出的正是这条：90°/270° 与反对角镜像当时没查，只是被 180° 间接盖住）。
     // 每一条都要求"至少一整格被搬走"：>0 只能说明不是恒等，>= oneCell 才说明
     // 是某个**角标记**换到了别处（那正是 uv 接反时会发生的事）。
-    SR_ASSERT(countDifferingUnder(img, [](int x, int y, int, int, int& sx, int& sy) {
-                  sx = y; sy = x;   // 转置 ⇔ u/v 对调
-              }) >= oneCell);
-    SR_ASSERT(countDifferingUnder(img, [](int x, int y, int w, int, int& sx, int& sy) {
-                  sx = w - 1 - x; sy = y;   // u 镜像 ⇔ u → 1-u
-              }) >= oneCell);
-    SR_ASSERT(countDifferingUnder(img, [](int x, int y, int, int h, int& sx, int& sy) {
-                  sx = x; sy = h - 1 - y;   // v 镜像 ⇔ v → 1-v
-              }) >= oneCell);
-    SR_ASSERT(countDifferingUnder(img, [](int x, int y, int w, int h, int& sx, int& sy) {
-                  sx = w - 1 - x; sy = h - 1 - y;   // 180° 旋转
-              }) >= oneCell);
+    struct Sym { const char* name; int kind; };
+    const Sym syms[7] = {
+        {"转置（主对角镜像）⇔ u/v 对调", 0},
+        {"u 镜像 ⇔ u → 1-u", 1},
+        {"v 镜像 ⇔ v → 1-v", 2},
+        {"180° 旋转", 3},
+        {"90° 旋转", 4},
+        {"270° 旋转", 5},
+        {"反对角镜像", 6},
+    };
+    for (const Sym& s : syms) {
+        int differing = 0;
+        switch (s.kind) {
+            case 0: differing = countDifferingUnder(img, [](int x, int y, int, int, int& sx, int& sy) { sx = y; sy = x; }); break;
+            case 1: differing = countDifferingUnder(img, [](int x, int y, int w, int, int& sx, int& sy) { sx = w - 1 - x; sy = y; }); break;
+            case 2: differing = countDifferingUnder(img, [](int x, int y, int, int h, int& sx, int& sy) { sx = x; sy = h - 1 - y; }); break;
+            case 3: differing = countDifferingUnder(img, [](int x, int y, int w, int h, int& sx, int& sy) { sx = w - 1 - x; sy = h - 1 - y; }); break;
+            case 4: differing = countDifferingUnder(img, [](int x, int y, int w, int, int& sx, int& sy) { sx = y; sy = w - 1 - x; }); break;
+            case 5: differing = countDifferingUnder(img, [](int x, int y, int, int h, int& sx, int& sy) { sx = h - 1 - y; sy = x; }); break;
+            default: differing = countDifferingUnder(img, [](int x, int y, int w, int h, int& sx, int& sy) { sx = w - 1 - y; sy = h - 1 - x; }); break;
+        }
+        if (differing < oneCell) std::printf("[checker] %s 只搬动了 %d 个像素（< 一整格 %d）\n",
+                                             s.name, differing, oneCell);
+        SR_ASSERT(differing >= oneCell);
+    }
 }
 
 SR_TEST(single_cell_checker_is_entirely_the_origin_marker) {
