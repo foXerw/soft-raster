@@ -22,7 +22,11 @@ struct AppOptions {
     float distance = 5.0f;   // 轨道相机的初值（离屏渲染要确定性，所以必须能从命令行给）
     bool gradient = false;   // 背景用 M0 的全屏渐变（默认纯色 clear，因为渐变要吃掉一半帧预算）
     bool noFit = false;
-    std::string goldenWrite;   // 非空 = 渲染 golden 场景并写到这个路径
+    std::string goldenWrite;   // 非空 = 渲染 golden 场景（M3，无纹理）并写到这个路径
+    // M4 的参考图有**自己的入口**，而不是给 --golden-write 加一个"场景选择"：
+    // 带默认值的场景选择意味着"忘了指定场景"会把 M4 的图画进 M3 的路径（或反之），
+    // 而它的症状是"重新生成基准图之后一切正常"。两个显式入口 = 没有默认值 = 没有这个坑。
+    std::string goldenWriteTextured;
     bool help = false;
 };
 

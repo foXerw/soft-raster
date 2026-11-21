@@ -116,6 +116,8 @@ if(SR_BUILD_TESTS)
     tests/unit/test_sampler_bilinear.cpp
     tests/unit/test_sampler_mip.cpp
     tests/unit/test_texture_pipeline.cpp
+    tests/unit/test_texture_gen.cpp
+    tests/unit/test_golden_scene_textured.cpp
     tests/unit/test_image_stb.cpp
     tests/unit/test_image_tga.cpp
     tests/golden/golden.cpp

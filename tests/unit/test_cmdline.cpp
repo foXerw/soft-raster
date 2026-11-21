@@ -212,3 +212,28 @@ SR_TEST(cmdline_rejects_auto_close_below_one) {
     SR_ASSERT_FALSE(ok);
     SR_ASSERT(err.find("--auto-close") != std::string::npos);
 }
+
+SR_TEST(cmdline_golden_write_textured_is_a_separate_entry) {
+    // 两个 golden 入口必须**互不越界**：写 M4 的参考图不能顺手把 M3 的路径也填上。
+    // 若哪天有人合并它们，这条会红 —— 而合并的真实代价是"重新生成基准图后一切正常"，
+    // 那种故障没有别的信号。
+    Args a{{"--golden-write-textured", "assets/golden/m4_textured_cube.bmp"}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT(o.goldenWriteTextured == "assets/golden/m4_textured_cube.bmp");
+    SR_ASSERT(o.goldenWrite.empty());   // 没有被顺手填上
+    SR_ASSERT(o.offscreen);             // 写 golden 不需要窗口（与 --golden-write 一致）
+    SR_ASSERT_EQ(o.frames, 1);          // 也没有顺手改掉帧数
+}
+
+SR_TEST(cmdline_rejects_golden_write_textured_without_a_path) {
+    Args a{{"--golden-write-textured"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("--golden-write-textured") != std::string::npos);
+}

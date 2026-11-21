@@ -16,7 +16,8 @@ namespace {
 #ifndef SR_SOURCE_DIR
 #define SR_SOURCE_DIR "."
 #endif
-constexpr char kRefPath[] = SR_SOURCE_DIR "/assets/golden/m3_cube.bmp";
+constexpr char kRefM3[] = SR_SOURCE_DIR "/assets/golden/m3_cube.bmp";
+constexpr char kRefM4[] = SR_SOURCE_DIR "/assets/golden/m4_textured_cube.bmp";
 constexpr int kTolerancePerChannel = 1;   // ±1/255/通道（设计文档 C1′ 的具体化）
 
 struct Buffers {
@@ -30,28 +31,24 @@ struct Buffers {
     }
 };
 
-}  // namespace
-
-SR_TEST(golden_m3_cube_matches_reference) {
-#ifndef _MSC_VER
-    // C1′：golden 只在 MSVC 主路径判定。g++ 侧的标准库三角函数/pow 与 MSVC 不保证逐位一致，
-    // 为跨编译器 bit-stability 自建数学库属于计划外的一大块，且与学渲染无关。
-    std::printf("[skip] golden 只在 MSVC 判定（当前不是 MSVC）\n");
-    return;
-#else
+// 比对逻辑**只有一份**：两张参考图各写一遍循环的话，容差、报告条数、"缺图怎么办"
+// 这三件事会在某一次改动里只被改到一处 —— 而没人会去读那个没被改的测试，因为它一直是绿的。
+// scene 以函数指针传入：参考图必须由生产代码里的那一个函数生成（与 app 的 --golden-write* 同源）。
+void compareWithReference(const char* refPath, const char* genCommand,
+                          void (*scene)(sr::RenderTarget&, sr::FrameStats*)) {
     Buffers bufs(sr::kGoldenWidth, sr::kGoldenHeight);
     sr::FrameStats stats;
-    sr::renderGoldenScene(bufs.rt, &stats);
+    scene(bufs.rt, &stats);
 
     int refW = 0, refH = 0;
     std::vector<uint32_t> ref;
     std::string err;
-    if (!srtest::readBmp24(kRefPath, refW, refH, ref, err)) {
+    if (!srtest::readBmp24(refPath, refW, refH, ref, err)) {
         // 参考图缺失时**报错而不是静默通过**：静默 SKIP 会让"golden 从没跑过"看起来像"golden 全绿"。
         // 生成方式写在 assets/golden/README.md 里。
         SR_ASSERT_FALSE(err.empty());
-        std::printf("[golden] 缺少参考图 %s：%s\n", kRefPath, err.c_str());
-        std::printf("[golden] 生成：soft-raster --golden-write\n");
+        std::printf("[golden] 缺少参考图 %s：%s\n", refPath, err.c_str());
+        std::printf("[golden] 生成：%s\n", genCommand);
         SR_ASSERT(false);
         return;
     }
@@ -78,9 +75,33 @@ SR_TEST(golden_m3_cube_matches_reference) {
         }
     }
     if (diffs > 0) {
-        std::printf("[golden] 差异像素 %d 个，第一个在 (%d,%d)；构建 %s\n", diffs, firstX, firstY,
-                    sr::buildInfoString());
+        std::printf("[golden] %s 差异像素 %d 个，第一个在 (%d,%d)；构建 %s\n", refPath, diffs,
+                    firstX, firstY, sr::buildInfoString());
     }
     SR_ASSERT_EQ(diffs, 0);
+}
+
+}  // namespace
+
+SR_TEST(golden_m3_cube_matches_reference) {
+#ifndef _MSC_VER
+    // C1′：golden 只在 MSVC 主路径判定。g++ 侧的标准库三角函数/pow 与 MSVC 不保证逐位一致，
+    // 为跨编译器 bit-stability 自建数学库属于计划外的一大块，且与学渲染无关。
+    std::printf("[skip] golden 只在 MSVC 判定（当前不是 MSVC）\n");
+    return;
+#else
+    compareWithReference(kRefM3, "soft-raster --golden-write assets/golden/m3_cube.bmp",
+                         &sr::renderGoldenScene);
+#endif
+}
+
+SR_TEST(golden_m4_textured_cube_matches_reference) {
+#ifndef _MSC_VER
+    std::printf("[skip] golden 只在 MSVC 判定（当前不是 MSVC）\n");
+    return;
+#else
+    compareWithReference(kRefM4,
+                         "soft-raster --golden-write-textured assets/golden/m4_textured_cube.bmp",
+                         &sr::renderGoldenSceneTextured);
 #endif
 }

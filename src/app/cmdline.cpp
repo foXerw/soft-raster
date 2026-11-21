@@ -110,6 +110,12 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             out.offscreen = true;   // 写 golden 不需要窗口
             continue;
         }
+        // M4 的参考图有自己的入口，理由见 cmdline.h 的字段注释（Ruling 38）。
+        if (a == "--golden-write-textured") {
+            if (!p.nextString("--golden-write-textured", out.goldenWriteTextured)) return false;
+            out.offscreen = true;
+            continue;
+        }
         if (a == "--out") {
             if (!p.nextString("--out", out.out)) return false;
             continue;
@@ -199,6 +205,16 @@ std::string usageString() {
            "  --gradient         背景用全屏渐变（默认纯色；渐变每帧要吃 width*height 次编码）"
            "\n"
            "  --no-fit           载入模型后不自动调整相机\n"
+           "  --yaw <rad>        轨道相机初始偏航（离屏渲染要确定性，所以必须能从命令行给）\n"
+           "  --pitch <rad>      轨道相机初始俯仰\n"
+           "  --distance <N>     轨道相机初始距离，必须为正\n"
+           "  --auto-close <N>   窗口模式渲染 N 帧后自动关闭（冒烟测试用，不改渲染内容）\n"
+           "  --golden-write <path.bmp>\n"
+           "                     渲染 M3 golden 场景（顶点色立方体）并写出，隐含 --offscreen\n"
+           "  --golden-write-textured <path.bmp>\n"
+           "                     渲染 M4 golden 场景（贴图立方体 + 三线性）并写出。\n"
+           "                     与上面那个是**两个入口**而不是一个带默认值的场景选择：\n"
+           "                     后者会把 M4 的图画进 M3 的路径，而症状是\"重新生成后一切正常\"\n"
            "  --help, -h         显示本帮助\n";
 }
 

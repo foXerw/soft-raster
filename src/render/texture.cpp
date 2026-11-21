@@ -74,6 +74,41 @@ std::vector<ImageRGBA8> generateMipChain(const ImageRGBA8& base) {
     return chain;
 }
 
+ImageRGBA8 makeCheckerImage(int cells, int cellPx, const CheckerPalette& palette) {
+    ImageRGBA8 out;
+    if (cells <= 0 || cellPx <= 0) return out;
+    // 上限与 cmdline 的 kMaxDimension 一致：这张图会被 generateMipChain 整条展开
+    // （约 4/3 倍内存），一个手滑的 100000 会在测试进程里安静地吃掉几十 GB。
+    // 超限走与非法尺寸相同的兜底（空图），调用方按 width==0 判断。
+    const size_t side = static_cast<size_t>(cells) * static_cast<size_t>(cellPx);
+    if (side > 16384u) return out;
+
+    out.width = static_cast<int>(side);
+    out.height = static_cast<int>(side);
+    out.rgba.assign(side * side * 4u, 0);
+
+    for (size_t y = 0; y < side; ++y) {
+        const int cy = static_cast<int>(y) / cellPx;
+        for (size_t x = 0; x < side; ++x) {
+            const int cx = static_cast<int>(x) / cellPx;
+            const bool plain = ((cx + cy) & 1) == 0;   // 奇偶约定写死在头文件注释里
+            const uint8_t* c = plain ? palette.dark : palette.light;
+            // 三个角标记。cells==1 时三条分支指向同一格，于是"最后写的赢"就是优先级：
+            // origin 最后 ⇒ cells==1 得到一整格 uv 原点色（测试 pin 住了这个取舍）。
+            if (cx == cells - 1 && cy == 0) c = palette.uAxis;
+            if (cx == 0 && cy == cells - 1) c = palette.vAxis;
+            if (cx == 0 && cy == 0) c = palette.origin;
+
+            const size_t at = (y * side + x) * 4u;
+            out.rgba[at] = c[0];
+            out.rgba[at + 1u] = c[1];
+            out.rgba[at + 2u] = c[2];
+            out.rgba[at + 3u] = c[3];
+        }
+    }
+    return out;
+}
+
 Lod lodFromDerivatives(float texelsU, float texelsV, int levelCount, float dUdx, float dVdx,
                        float dUdy, float dVdy) {
     Lod out;

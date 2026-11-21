@@ -1,5 +1,6 @@
 #pragma once
-// RED 阶段的桩：类型与签名齐全，函数返回空/零。
+// 纹理的数据侧：ImageRGBA8（行主序 RGBA8 字节）、Texture（mip 链）、LOD 选择，
+// 以及程序生成的测试贴图。**采样**在 sampler.h（它只 include 这里）。
 #include <cstdint>
 #include <vector>
 
@@ -27,6 +28,34 @@ struct Texture {
     int levelCount() const { return static_cast<int>(levels.size()); }
     const uint8_t* texel(int level, int x, int y) const;
 };
+
+// ---------------------------------------------------------------------------
+// 程序生成的测试贴图（spec §7.4：「程序生成的 checker/gradient/uv 调试图，永远可用，零 IO」）。
+// 它同时是 golden 场景与 app 里那个立方体的贴图来源。
+//
+// 为什么不是"一张干净的棋盘"：棋盘格在**转置下恒等**、在 uv 翻转下只是明暗对调，
+// 于是一张纯棋盘当夹具时，"u/v 接反"这类错误永远不会让任何断言变红
+// （4.5 的方形足迹、4.3 的等差值、4.2 的整数乘积都是同一族坑）。
+// 三个角上各放一个不同的标记色、第四角留素棋盘 ⇒ 正方形的**任何**对称都不保持这张图，
+// 于是贴图朝向从"肉眼看像是对的"变成"三个断言可判"。副作用是它自解释：
+// 看画面就能立刻说出哪个角是 uv(0,0)、u 与 v 各朝哪边。
+// ---------------------------------------------------------------------------
+
+// 棋盘贴图的调色板（RGBA8 字节）。颜色提成结构体而不是写死在函数里：
+// 端到端测试要断言"这个像素是 uv(0,0) 那个角"，它需要的是**名字**而不是数字。
+struct CheckerPalette {
+    uint8_t dark[4] = {22, 24, 30, 255};        // ((cx+cy)&1)==0 的格
+    uint8_t light[4] = {226, 228, 234, 255};    // ((cx+cy)&1)==1 的格
+    uint8_t origin[4] = {226, 40, 40, 255};     // cell(0,0)            = uv(0,0)
+    uint8_t uAxis[4] = {58, 190, 60, 255};      // cell(cells-1,0)      = uv(1,0)
+    uint8_t vAxis[4] = {58, 110, 226, 255};     // cell(0,cells-1)      = uv(0,1)
+};
+
+// cells x cells 的棋盘，每格 cellPx x cellPx 像素（图是 cells*cellPx 见方）。
+// 图像行主序、top-down ⇒ v 的正方向是"往下"，与 ColorTarget 的约定一致。
+// 角标记与素格抢同一格时（cells==1 的极端情形）优先级是 origin > uAxis > vAxis > 素棋盘。
+// cells <= 0 或 cellPx <= 0 ⇒ 返回空图（width 0），与 downsampleBox2 的兜底一致。
+ImageRGBA8 makeCheckerImage(int cells, int cellPx, const CheckerPalette& palette);
 
 // 盒式滤波生成下一级：2x2 平均，尺寸向下取整但**每一维都不低于 1**
 // （2x1 的下一级是 1x1，沿只有的那一行复制采样；1x0 不是一级纹理，它会把链的尾巴吃掉）。
