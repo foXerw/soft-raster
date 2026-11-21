@@ -96,14 +96,21 @@
 
 ### Task 4.6: stb_image 接入 + 手写 TGA
 
-- [ ] `third_party/stb_image.h`（版本与许可证写在文件头注释，C2）+ `src/loader/image_stb.{h,cpp}`（core 之外）
-- [ ] 测试 TGA（纯函数，可单测：24bpp/32bpp、自底向上、非法输入返回 false）；stb 侧只测"给了路径不存在时返回 false 且 err 非空"
-- [ ] `grep -rn "#include <windows" src/ | grep -v '^src/app'` 仍 CLEAN；`grep -rn "stb_image" src/` 只命中 `src/loader/image_stb.*`（C2 的"唯一一处"要能被机器检查）
-- [ ] Commit
+- [x] `third_party/stb_image.h`（版本与许可证写在文件头注释，C2）+ `src/loader/image_stb.{h,cpp}`（core 之外）
+- [x] 测试 TGA（纯函数，可单测：24bpp/32bpp、自底向上、非法输入返回 false）；stb 侧只测"给了路径不存在时返回 false 且 err 非空"
+- [x] `grep -rn "#include <windows" src/ | grep -v '^src/app'` 仍 CLEAN；`grep -rn "stb_image" src/` 只命中 `src/loader/image_stb.*`（C2 的"唯一一处"要能被机器检查）
+- [x] Commit
 
 ### Task 4.7: M4 可见成果 + 收尾
 
-- [ ] 立方体贴程序生成的 checker（uv 覆盖 [0,1]，每面同一张）；`1` 键切 mip、`2` 键切 nearest/bilinear/trilinear
-- [ ] 手动验证（这是 spec §8 的验收，必须亲眼看过）：旋转时贴图不扭曲；关掉 mip 在斜面/远处闪烁，打开不闪
-- [ ] `docs/notes/M4.md`：texel 中心约定与 off-by-half；sRGB 解码为什么在采样时做而不是在加载时做（加载时解码会把 8bit 存成 float，显存/内存翻倍，且 mip 平均会在错误的空间里做）；为什么各向异性取 max 而不是平均；mip 链在 2x1 处的那一级不是"真实平均"而是边缘复制
-- [ ] README M4 打勾 + 图；全套验证（Debug/Release/g++/C4/C2）；Commit + push
+- [x] 立方体贴程序生成的 checker（uv 覆盖 [0,1]，每面同一张）；`1` 键切 mip、`2` 键切 nearest/bilinear/trilinear
+      **计划缺陷（已修）**：`makeCube` 的 uv 从 M2 起就是错的 —— 按下标位模式赋值给出一个自交的
+      蝴蝶结参数化，而且同一张表无法表达"v=0 在顶边"（±X 面的角序起点不同 ⇒ 那两面转了 90°）。
+      另外"纯棋盘"作为夹具在转置下恒等，测不出 uv 接反，所以贴图带三个角标记。见 notes §1 与 §7。
+- [x] 手动验证（这是 spec §8 的验收，必须亲眼看过）：旋转时贴图不扭曲；关掉 mip 在斜面/远处闪烁，打开不闪
+      —— 产品方 2026-11-21 在窗口里跑过并确认。
+- [x] `docs/notes/M4-纹理与采样.md`（仓库的命名约定是 `Mn-中文标题.md`，不是计划写的 `M4.md`）：
+      texel 中心约定与 off-by-half；sRGB 解码为什么在采样时做而不是在加载时做；
+      为什么各向异性取 max 而不是平均；mip 链在 2x1 处的那一级不是"真实平均"而是边缘复制；
+      外加本里程碑真正的产出——"夹具在某个对称操作下不变，那个操作就测不出来"这一族（踩了五次）。
+- [x] README M4 打勾 + 图；全套验证（Debug/Release/g++/C4/C2）；Commit + push
