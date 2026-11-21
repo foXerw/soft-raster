@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -30,7 +31,21 @@ struct Register {
 // 当前用例内的失败次数；runAll() 在每个用例开始前清零。
 extern int currentFailures;
 
-int runAll();
+// 按用例名挑选用例。filter 为空（nullptr 或 ""）时放行全部。
+// 为什么是**子串**而不是全名相等：调试崩溃时手里往往只有半个名字（"mip_chain"），
+// 要求敲全名会让过滤器本身变成新的错误来源 —— 敲错一个字母 = 一条都没跑 = 看起来全绿。
+bool nameMatchesFilter(const char* name, const char* filter);
+
+struct Options {
+    const char* filter = nullptr;   // 指向 argv，进程活多久它活多久
+};
+
+// 解析命令行。目前只有 `--only <子串>`。
+// 陌生参数与缺值的 --only 都必须报错返回 false —— 静默忽略的代价是
+// "以为在跑过滤、其实跑的是全量（或 0 条）"，这类假通过本项目已经踩过几次。
+bool parseArgs(int argc, char** argv, Options& out, std::string& err);
+
+int runAll(const Options& opts = {});
 
 void reportFailure(const char* file, int line, const char* expr);
 void reportFailureNear(const char* file, int line, const char* expr,

@@ -1,6 +1,7 @@
 #include "harness.h"
 
 #include <cstdio>
+#include <cstring>
 
 namespace srtest {
 
@@ -34,19 +35,69 @@ void reportFailureEq(const char* file, int line, const char* expr,
                 static_cast<unsigned long long>(expected) & 0xFFFFFFFFull);
 }
 
-int runAll() {
-    int failedCases = 0;
+bool nameMatchesFilter(const char* name, const char* filter) {
+    if (filter == nullptr || filter[0] == '\0') return true;
+    return std::strstr(name, filter) != nullptr;
+}
+
+bool parseArgs(int argc, char** argv, Options& out, std::string& err) {
+    out.filter = nullptr;      // 复位：不能沿用调用方结构体里的残留值
+    err.clear();
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = (argv[i] != nullptr) ? argv[i] : "";
+        if (arg == "--only") {
+            if (i + 1 >= argc) {
+                err = "--only 后面缺少用例名";
+                return false;
+            }
+            out.filter = argv[++i];
+        } else {
+            err = "无法识别的参数: " + arg;
+            return false;
+        }
+    }
+    return true;
+}
+
+int runAll(const Options& opts) {
     const auto& s = suite();
-    std::printf("[run] %d 个用例\n", static_cast<int>(s.size()));
+    const bool filtering = (opts.filter != nullptr && opts.filter[0] != '\0');
+
+    int matched = 0;
     for (const auto& entry : s) {
+        if (nameMatchesFilter(entry.first, opts.filter)) ++matched;
+    }
+    if (filtering && matched == 0) {
+        // 一条都没匹配上必须是**失败**：过滤器拼错时报"0 个用例，失败 0 个 → 退出码 0"，
+        // 比崩溃更难发现，因为它长得像全绿。
+        std::printf("FAIL --only \"%s\" 没有匹配任何用例（共 %d 条，检查拼写）\n",
+                    opts.filter, static_cast<int>(s.size()));
+        return 1;
+    }
+
+    int failedCases = 0;
+    if (filtering) {
+        std::printf("[run] %d/%d 个用例（过滤: %s）\n", matched, static_cast<int>(s.size()),
+                    opts.filter);
+    } else {
+        std::printf("[run] %d 个用例\n", static_cast<int>(s.size()));
+    }
+    for (const auto& entry : s) {
+        if (!nameMatchesFilter(entry.first, opts.filter)) continue;
         currentFailures = 0;
+        if (filtering) {
+            // 崩在哪个用例，就让它成为 stdout 上最后一行。**必须 fflush**：
+            // 进程被杀时缓冲区里的东西不会落盘，而"崩溃且没有任何输出"正是这次要解决的问题。
+            std::printf("[case] %s\n", entry.first);
+            std::fflush(stdout);
+        }
         entry.second();
         if (currentFailures != 0) {
             ++failedCases;
             std::printf("FAIL %s  (%d 处断言失败)\n", entry.first, currentFailures);
         }
     }
-    std::printf("[done] %d 个用例，失败 %d 个\n", static_cast<int>(s.size()), failedCases);
+    std::printf("[done] %d 个用例，失败 %d 个\n", matched, failedCases);
     return failedCases;
 }
 
