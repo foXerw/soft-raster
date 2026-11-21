@@ -33,6 +33,7 @@ add_library(soft_raster_core STATIC
   src/render/triangle_setup.cpp
   src/render/builtin_shaders.cpp
   src/render/render_backend.cpp
+  src/render/texture.cpp
   src/scene/mesh.cpp
   src/scene/golden_scene.cpp
 )
@@ -90,6 +91,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_sink.cpp
     tests/unit/test_camera.cpp
     tests/unit/test_input.cpp
+    tests/unit/test_texture.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
