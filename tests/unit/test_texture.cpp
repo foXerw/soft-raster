@@ -3,34 +3,16 @@
 #include <cmath>
 
 #include "harness.h"
+#include "test_util.h"
 
 namespace {
 
-sr::ImageRGBA8 makeImage(int w, int h, uint8_t (*fn)(int x, int y)) {
-    sr::ImageRGBA8 img;
-    img.width = w;
-    img.height = h;
-    img.rgba.assign(static_cast<size_t>(w) * h * 4u, 0);
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const uint8_t v = fn(x, y);
-            const size_t at = (static_cast<size_t>(y) * w + x) * 4u;
-            img.rgba[at] = v;
-            img.rgba[at + 1] = v;
-            img.rgba[at + 2] = v;
-            img.rgba[at + 3] = 255;
-        }
-    }
-    return img;
-}
-
-uint8_t constant200(int, int) { return 200; }
 uint8_t leftRight(int x, int) { return static_cast<uint8_t>(x < 2 ? 0 : 255); }
 
 }  // namespace
 
 SR_TEST(mip_chain_halves_until_one_dimension_reaches_one) {
-    const sr::ImageRGBA8 base = makeImage(8, 4, constant200);
+    const sr::ImageRGBA8 base = makeGrayImage(8, 4, grayConstant200);
     const std::vector<sr::ImageRGBA8> chain = sr::generateMipChain(base);
     SR_ASSERT_EQ(static_cast<int>(chain.size()), 4);   // 8x4 → 4x2 → 2x1 → 1x1
     // 尺寸断言必须被 size 保护：链短一级就会越界读 chain[3]，
@@ -47,7 +29,7 @@ SR_TEST(no_mip_level_is_ever_empty) {
     // 又会让"级数 = log2(边长)+1"这个直觉在所有非 2 的幂尺寸上失效。
     const int shapes[][2] = {{8, 4}, {5, 3}, {1, 8}, {2, 1}, {1, 1}, {3, 3}, {7, 2}};
     for (const auto& s : shapes) {
-        const sr::ImageRGBA8 base = makeImage(s[0], s[1], constant200);
+        const sr::ImageRGBA8 base = makeGrayImage(s[0], s[1], grayConstant200);
         const std::vector<sr::ImageRGBA8> chain = sr::generateMipChain(base);
         SR_ASSERT_FALSE(chain.empty());
         if (chain.empty()) continue;
@@ -67,7 +49,7 @@ SR_TEST(no_mip_level_is_ever_empty) {
 }
 
 SR_TEST(box_downsample_averages_each_2x2_block) {
-    const sr::ImageRGBA8 base = makeImage(2, 2, [](int x, int y) -> uint8_t {
+    const sr::ImageRGBA8 base = makeGrayImage(2, 2, [](int x, int y) -> uint8_t {
         if (x == 0 && y == 0) return 0;
         if (x == 1 && y == 0) return 100;
         if (x == 0 && y == 1) return 200;
@@ -85,7 +67,7 @@ SR_TEST(box_downsample_averages_each_2x2_block) {
 SR_TEST(box_downsample_of_odd_width_drops_the_last_column) {
     // 奇数尺寸是 mip 链最容易写错的地方。约定：**向下取整**（丢掉最后一条不完整的行列），
     // 与 GPU 的行为一致；四舍五入向上会让链的总像素数反而增加。
-    const sr::ImageRGBA8 base = makeImage(5, 3, constant200);
+    const sr::ImageRGBA8 base = makeGrayImage(5, 3, grayConstant200);
     const sr::ImageRGBA8 mip = sr::downsampleBox2(base);
     SR_ASSERT_EQ(mip.width, 2);
     SR_ASSERT_EQ(mip.height, 1);
@@ -94,7 +76,7 @@ SR_TEST(box_downsample_of_odd_width_drops_the_last_column) {
 SR_TEST(mip_chain_of_a_gradient_keeps_the_mean_constant) {
     // 平均保持性：整条链上"所有像素的平均值"应当基本不变（盒式滤波是保均值的）。
     // 这一条能抓住"把平均写成取点"或"除数用了错误的面积"。
-    const sr::ImageRGBA8 base = makeImage(8, 8, [](int x, int) -> uint8_t {
+    const sr::ImageRGBA8 base = makeGrayImage(8, 8, [](int x, int) -> uint8_t {
         return static_cast<uint8_t>(x * 30);
     });
     const std::vector<sr::ImageRGBA8> chain = sr::generateMipChain(base);
@@ -155,7 +137,7 @@ SR_TEST(mip_level_scales_each_derivative_by_its_own_texture_dimension) {
 SR_TEST(mip_level_is_clamped_to_the_chain_length) {
     // 链只有 4 级时，导数再大也不能越界读到 levels[9]（症状是崩溃或读到垃圾）。
     // 夹取必须在函数内部：让每个调用方"记得"夹一次，等于安排它哪天忘一次。
-    const sr::ImageRGBA8 base = makeImage(8, 8, constant200);
+    const sr::ImageRGBA8 base = makeGrayImage(8, 8, grayConstant200);
     const std::vector<sr::ImageRGBA8> chain = sr::generateMipChain(base);
     SR_ASSERT_EQ(static_cast<int>(chain.size()), 4);   // 8x8 → 4x4 → 2x2 → 1x1
     const int level = sr::mipLevelFromDerivatives(8.0f, 8.0f, static_cast<int>(chain.size()),
@@ -169,7 +151,7 @@ SR_TEST(texture_texel_returns_a_readable_pointer) {
     sr::Texture t;
     t.width = 4;
     t.height = 4;
-    t.levels.push_back(makeImage(4, 4, leftRight));
+    t.levels.push_back(makeGrayImage(4, 4, leftRight));
     const uint8_t* p = t.texel(0, 0, 0);
     SR_ASSERT(p != nullptr);
     SR_ASSERT_EQ(p[0], 0);
