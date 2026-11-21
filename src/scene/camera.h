@@ -25,11 +25,17 @@ struct OrbitCamera {
 
     Mat4 view() const { return makeLookAt(eye(), target, Vec3{0, 1, 0}); }
 
+    // "抓住表面"的约定：光标下的那个点应当跟着光标走。两个轴的符号因此不同，
+    // 这不是笔误，而是"相机绕物体转"与"物体跟着手转"之间的换算在两个轴上方向相反：
+    //   水平：往右拖 ⇒ 物体向右转 ⇒ 相机必须绕到物体的**左**侧 ⇒ yaw 减小。
+    //         （验证：yaw 从 0 减小，eye 移到 -x；此时世界 +z 上的点投影到画面右侧 ✓）
+    //   垂直：往下拖 ⇒ 物体前表面向下走、顶部转过来 ⇒ 相机必须升到物体**上方** ⇒ pitch 增大。
+    //         （验证：eye 上移并俯视原点，原点高度的点落到画面下方 ✓）
+    // 第一版两个轴都写成 +=，水平方向因此是反的（产品方反馈）。
     void orbit(float dxPixels, float dyPixels) {
         // 每像素 0.01 弧度：一屏拖动约转半圈，手感上"跟手"。
-        yaw += dxPixels * 0.01f;
-        pitch += dyPixels * 0.01f;      // 屏幕 y 朝下：向下拖 ⇒ dy 为正 ⇒ 仰角降低，
-                                        // 也就是"把物体往上翻"，与大多数查看器一致。
+        yaw -= dxPixels * 0.01f;
+        pitch += dyPixels * 0.01f;
         constexpr float kLimit = 1.5533f;   // 89°
         if (pitch > kLimit) pitch = kLimit;
         if (pitch < -kLimit) pitch = -kLimit;

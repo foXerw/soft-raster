@@ -67,12 +67,24 @@ SR_TEST(dolly_is_multiplicative_and_bounded) {
     SR_ASSERT(c.distance <= 1000.0f);
 }
 
-SR_TEST(dragging_right_rotates_the_scene_left) {
-    // 手感方向：往右拖，物体应该往右转（相机绕物体向左走）。方向写反的症状是
-    // "拖动跟图像相反"，非常别扭，所以把它写成断言而不是靠手感调。
+SR_TEST(dragging_right_turns_the_object_right) {
+    // 手感方向：往右拖 ⇒ 物体向右转 ⇒ 相机绕到物体左侧 ⇒ yaw **减小**。
+    // 第一版写成 yaw += dx，方向是反的（产品方反馈"拖动方向和鼠标方向相反"）。
+    // 这条断言之所以重要：它不能靠"跟着实现写"来通过，必须靠上面那段投影验证。
     sr::OrbitCamera c;
     c.yaw = 0.0f;
     c.orbit(100.0f, 0.0f);
-    SR_ASSERT(c.yaw > 0.0f);
+    SR_ASSERT(c.yaw < 0.0f);
+    SR_ASSERT(c.eye().x < 0.0f);        // 相机到了 -x 一侧
     SR_ASSERT_NEAR(c.eye().x, c.distance * std::cos(c.pitch) * std::sin(c.yaw), 1e-5f);
+}
+
+SR_TEST(dragging_down_brings_the_top_toward_the_viewer) {
+    // 垂直轴与水平轴符号不同，理由见 camera.h：往下拖时相机要升到上方。
+    // 如果这里也写成 -=，用户会觉得"上下反了"，而它其实是对的。
+    sr::OrbitCamera c;
+    c.pitch = 0.0f;
+    c.orbit(0.0f, 100.0f);
+    SR_ASSERT(c.pitch > 0.0f);
+    SR_ASSERT(c.eye().y > 0.0f);
 }
