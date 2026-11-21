@@ -19,7 +19,9 @@ CMakeFiles/
 /*.bmp
 /shot*.bmp
 /*.ppm
+/*.png
 /tmp/
+/sr_tmp_bmp/
 
 # --- 3D 模型与贴图：这些是资产，不是编译产物 -------------------------------
 # 反例：绝不要在这里写 `*.obj`。编译器中间文件和 Wavefront OBJ 同名扩展名，

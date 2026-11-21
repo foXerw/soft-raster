@@ -1,0 +1,40 @@
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "math/bbox.h"
+#include "math/vec.h"
+
+namespace sr {
+
+// SoA + 索引。SoA 的理由：属性插值与 tile 分箱对"同一种属性连续存放"更友好，
+// 而且 M9 的 SIMD 可以一次取 4 个同名字段。代价是顶点访问要写四个下标，
+// 所以约定写在这里：indices 每 3 个一组是一个三角形，逆时针（NDC 约定）。
+struct Mesh {
+    std::vector<Vec3> positions;
+    std::vector<Vec3> normals;
+    std::vector<Vec2> uvs;
+    // 顶点色（线性空间 + alpha）。之所以是 Vec4 而不是 LinearColor：
+    // 它要作为一个 4 分量的 varying 走完整条插值管线，M3 的 PlaneEq 数组按 float 分量索引。
+    std::vector<Vec4> colors;
+    std::vector<uint32_t> indices;
+    BBox bounds;
+
+    void recomputeBounds();
+    float boundRadius() const { return bounds.radius(); }
+    Vec3 boundCenter() const { return bounds.center(); }
+    int triangleCount() const { return static_cast<int>(indices.size() / 3); }
+};
+
+Mesh makeCube(float size, bool perFaceNormals);
+
+// 把 colors 改成"位置编码色"（每个顶点唯一），用来验证插值本身。
+// 面色测试要的是**可区分**，插值测试要的是**不连续就看得见**，两者是相反的要求，
+// 所以这里给一个显式的切换而不是让 makeCube 同时满足。
+void applyPositionColors(Mesh& m);
+// 极点顶点按经度重复：共享极点会让 uv 在接缝处从 1 跳回 0，M4 的纹理会拉出一条线。
+Mesh makeUVSphere(float radius, int stacks, int slices);
+Mesh makeTorus(float majorRadius, float minorRadius, int ringSegments, int sideSegments);
+
+}  // namespace sr

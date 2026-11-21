@@ -18,32 +18,75 @@ cmake --build build --config Debug
 ctest --test-dir build -C Debug --output-on-failure
 ```
 
-主构建路径是 CMake + Visual Studio 2022。核心库与测试也能用 MSYS2 g++ 配置编译：
+主构建路径是 CMake + Visual Studio 2022（`cl` 不在普通 shell 的 PATH，VS 生成器会自己找到它）。
+核心库与测试也能用 MSYS2 g++ 配置编译，但这台机器上 `make` 与 `g++` 不在同一个环境，
+需要把三处都指明：
 
 ```bash
-cmake -S . -B build-gcc -DSR_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-gcc && ctest --test-dir build-gcc --output-on-failure
+cmake -S . -B build-gcc -G "MSYS Makefiles" \
+  -DCMAKE_MAKE_PROGRAM=/c/msys64/usr/bin/make.exe \
+  -DCMAKE_CXX_COMPILER=/c/msys64/ucrt64/bin/g++.exe \
+  -DSR_BUILD_APP=OFF -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-gcc && ctest --test-dir build-gcc --timeout 60
 ```
+
+`ctest` 一律带 `--timeout`：Windows 上"缺 DLL"的表现不是报错而是进程起不来，
+CTest 会把它记成 Timeout —— 没有上限时，一个误导性故障能吃掉整个会话。
 
 ## 运行
 
 ```bash
 ./build/Debug/soft-raster.exe                       # 1280x720 窗口
 ./build/Debug/soft-raster.exe --width 640 --height 360
-./build/Debug/soft-raster.exe --offscreen --frames 1 --out shot.bmp   # 离屏渲染并存图
+./build/Debug/soft-raster.exe --offscreen --frames 1 --width 640 --height 360 --out shot.bmp   # 离屏渲染并存图
+./build/Debug/soft-raster.exe --bench 60      # 离屏跑 60 帧并打印每帧耗时
+./build/Debug/soft-raster.exe --help          # 完整选项表
 ```
 
-按键表与命令行选项会在对应里程碑落地后补全。
+可用的按键：`P` 暂停、`O` 单步、`S` 截图到 `screenshots/`、`V` 循环调试视图（color → depth → gray）、
+`W` 切换背面剔除、`1` 开关 mipmap（关掉之后斜面与远处开始闪，这是 M4 的验收）、
+`2` 循环采样模式 nearest → bilinear → trilinear、`Esc` 退出。鼠标左键拖拽 = 轨道旋转，滚轮 = 推拉。
+`R`（重载模型）在 M5 落地。HUD 第一行会显示当前的 `MIP ON/OFF` 与过滤模式，
+所以"该看到什么" always 在画面上。
+
+M0 的样子（离屏渲染；HUD 两行文字由自绘的 8×8 位图字体画出，不经过 GDI 字体）：
+
+![M0 HUD](docs/notes/img/m0-hud-preview.png)
+
+完整笔记见 [`docs/notes/M0-骨架与像素通路.md`](docs/notes/M0-骨架与像素通路.md)。
+
+M4 的样子（golden 参考图原尺寸 320×180；立方体贴一张程序生成的 checker，
+三个角格是 uv 方向标记：红 = `uv(0,0)`、绿 = `uv(1,0)`、蓝 = `uv(0,1)`，第四角留素棋盘）：
+
+![M4 golden](docs/notes/img/m4-golden.png)
+
+完整笔记见 [`docs/notes/M4-纹理与采样.md`](docs/notes/M4-纹理与采样.md) ——
+包括"为什么纯棋盘不能当采样测试的夹具"这一族坑（M4 里踩了五次）。
+
+## 回归基准
+
+```bash
+ctest --test-dir build -C Debug --timeout 60        # 单元测试 + golden 比对
+./build/Debug/soft-raster.exe --golden-write assets/golden/m3_cube.bmp   # 重新生成 M3 基准图
+./build/Debug/soft-raster.exe --golden-write-textured assets/golden/m4_textured_cube.bmp   # M4
+```
+
+两张参考图是**两个 flag**而不是一个带默认值的场景选择：默认值意味着"忘了指定场景"
+会把 M4 的图画进 M3 的路径，而那个错误的症状是"重新生成之后一切正常"。
+
+golden 只在 MSVC 主路径判定（g++ 侧只要求编译 + 纯逻辑单测全绿），理由见
+[`docs/notes/M3-深度与插值.md`](docs/notes/M3-深度与插值.md) 第 6 节与
+[`assets/golden/README.md`](assets/golden/README.md)。
 
 ## 里程碑进度
 
 | # | 内容 | 状态 |
 |---|---|---|
-| M0 | 仓库骨架、CMake、Win32 窗口 + DIB、测试图案、BMP 截图、位图字体 HUD | ☐ |
-| M1 | 数学库 + 标量 edge-function 光栅器（Backend A）| ☐ |
-| M2 | 完整几何阶段：VS / 六面裁剪 / 透视除法 / 视口 / Setup / 背面剔除 | ☐ |
-| M3 | Z-buffer + 透视正确插值 + 顶点色 + golden image | ☐ |
-| M4 | 透视正确 UV + 纹理采样 + mipmap | ☐ |
+| M0 | 仓库骨架、CMake、Win32 窗口 + DIB、测试图案、BMP 截图、位图字体 HUD | ✅ [笔记](docs/notes/M0-骨架与像素通路.md) |
+| M1 | 数学库 + 标量 edge-function 光栅器（Backend A）| ✅ [笔记](docs/notes/M1-数学与光栅器.md) |
+| M2 | 完整几何阶段：VS / 六面裁剪 / 透视除法 / 视口 / Setup / 背面剔除 | ✅ [笔记](docs/notes/M2-几何阶段.md) |
+| M3 | Z-buffer + 透视正确插值 + 顶点色 + golden image | ✅ [笔记](docs/notes/M3-深度与插值.md) |
+| M4 | 透视正确 UV + 纹理采样（nearest/bilinear/trilinear）+ mipmap + stb_image/TGA 加载 | ✅ [笔记](docs/notes/M4-纹理与采样.md) |
 | M5 | OBJ/MTL 导入 + 多材质 + 包围球自动 fit | ☐ |
 | M6 | 光照：Gouraud 与 Blinn-Phong 逐像素对比、线性空间 + sRGB | ☐ |
 | M7 | 轨道相机 + 阶段可视化 + 计时 HUD（**可演示终态**）| ☐ |

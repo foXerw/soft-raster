@@ -15,7 +15,9 @@
 *.inl text eol=lf
 *.cpp text eol=lf
 *.md text eol=lf
-*.obj text eol=lf     # 编译中间产物不会入库（见 .gitignore 顶部注释）；Wavefront OBJ 是文本，同样按文本处理
+# 编译中间产物不会入库（见 .gitignore 顶部注释）；Wavefront OBJ 是文本，同样按文本处理。
+# 注意：gitattributes 不支持行尾注释，`#` 只能出现在行首。
+*.obj text eol=lf
 *.mtl text eol=lf
 
 # 导出脚本产物
