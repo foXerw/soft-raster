@@ -14,9 +14,13 @@ std::vector<std::pair<const char*, Fn>>& suite() {
 
 Register::Register(const char* name, Fn fn) { suite().emplace_back(name, fn); }
 
+// 三个 report* 都要 fflush：stdout 重定向到文件/管道时是**全缓冲**的，
+// 用例先断言失败、紧接着又踩出崩溃（M4.1 的 chain[3] 越界就是这个形状）时，
+// 缓冲区里的 FAIL 行会随进程一起消失，看起来像"崩得毫无征兆"。
 void reportFailure(const char* file, int line, const char* expr) {
     ++currentFailures;
     std::printf("    FAIL %s:%d  断言不成立: %s\n", file, line, expr);
+    std::fflush(stdout);
 }
 
 void reportFailureNear(const char* file, int line, const char* expr,
@@ -24,6 +28,7 @@ void reportFailureNear(const char* file, int line, const char* expr,
     ++currentFailures;
     std::printf("    FAIL %s:%d  %s  实际 %.9g  期望 %.9g  容差 %.3g  误差 %.9g\n",
                 file, line, expr, actual, expected, tol, std::fabs(actual - expected));
+    std::fflush(stdout);
 }
 
 void reportFailureEq(const char* file, int line, const char* expr,
@@ -33,6 +38,7 @@ void reportFailureEq(const char* file, int line, const char* expr,
                 file, line, expr, actual, expected,
                 static_cast<unsigned long long>(actual) & 0xFFFFFFFFull,
                 static_cast<unsigned long long>(expected) & 0xFFFFFFFFull);
+    std::fflush(stdout);
 }
 
 bool nameMatchesFilter(const char* name, const char* filter) {
