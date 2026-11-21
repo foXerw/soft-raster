@@ -208,6 +208,11 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     case 'V': in->cycleView = true; break;
                     case 'W': in->toggleWireframe = true; break;
                     case 'R': in->reloadModel = true; break;
+                    // 数字这一排：虚拟键码 VK_1 / VK_2 的字面值就是 ASCII '1' / '2'（0x31 / 0x32），
+                    // 所以与上面的字母同族。（本机 SDK 的 winnt.h 在 WINVER < WIN10 时**不定义**
+                    // VK_0..VK_9 —— 写 VK_1 会得到 C2065，症状像"这个键不存在"，其实只是宏没开。）
+                    case '1': in->toggleMip = true; break;
+                    case '2': in->cycleFilter = true; break;
                     default: break;
                 }
             }

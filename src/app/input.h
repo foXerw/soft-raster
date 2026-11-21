@@ -51,6 +51,11 @@ struct InputState {
     bool cycleView = false;
     bool toggleWireframe = false;
     bool reloadModel = false;
+    // M4 的两个采样旋钮（spec §7.6 的按键表把它们分开列，所以这里是两个事件而不是一个"切过滤"）。
+    // `1` = mip 开关，`2` = nearest → bilinear → trilinear。两者正交（Ruling 31）：
+    // "关 mip 但用三线性"是个合法组合，它的语义是"永远在 level 0 上做双线性"。
+    bool toggleMip = false;
+    bool cycleFilter = false;
 
     bool windowResized = false;
 };

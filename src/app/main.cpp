@@ -27,6 +27,7 @@
 #include "render/builtin_shaders.h"
 #include "render/color.h"
 #include "render/render_backend.h"
+#include "render/sampler.h"
 #include "render/sink.h"
 #include "render/overlay_font.h"
 #include "render/patterns.h"
@@ -53,6 +54,31 @@ const wchar_t* kWindowTitle = L"soft-raster — 纯 CPU 软件光栅化";
 bool g_gradientBackground = false;   // 由 --gradient 打开
 bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
 sr::DebugViewSink g_sink;       // 'V' 循环：color → depth → gray
+
+// M4 的两个采样旋钮（`1` 与 `2`）。它们是**应用状态**而不是管线状态：
+// PipelineState 每帧重建，而这两个变量的生命期是整个程序 —— 暂停时反复按也保持得住。
+// 两个旋钮正交（Ruling 31）：`1` 关 mip 时 `2` 依然在三线性/双线性/最近邻之间循环，
+// "关 mip + 三线性"的语义是"永远在 level 0 上做双线性"，不是"退回最近邻"。
+bool g_useMip = true;
+sr::FilterMode g_filter = sr::FilterMode::Trilinear;
+
+const char* filterName(sr::FilterMode f) {
+    switch (f) {
+        case sr::FilterMode::Nearest: return "NEAREST";
+        case sr::FilterMode::Bilinear: return "BILINEAR";
+        case sr::FilterMode::Trilinear: return "TRILINEAR";
+    }
+    return "?";
+}
+
+// 循环顺序固定 NEAREST → BILINEAR → TRILINEAR → NEAREST：
+// 与"从最便宜到最贵"一致，按两下就能从"看锯齿"走到"看 mip"，不用绕远路。
+sr::FilterMode nextFilter(sr::FilterMode f) {
+    return (f == sr::FilterMode::Nearest)
+               ? sr::FilterMode::Bilinear
+               : (f == sr::FilterMode::Bilinear) ? sr::FilterMode::Trilinear
+                                                 : sr::FilterMode::Nearest;
+}
 
 // 转台速度（弧度/秒）。0.6 ≈ 每秒 34°，一圈约 10 秒：慢到能看清形状，
 // 又快到让人觉得画面是活的。
@@ -89,11 +115,24 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         sr::PipelineState st;
         st.target = &target;
         st.vertexShader = sr::transformVS;
-        st.fragmentShader = sr::vertexColorFS;
+        // M4 的可见成果：贴一张程序生成的 checker。
+        // 顶点色路径（vertexColorFS）在这里退出画面，但 Mesh 里的 colors 仍然保留 ——
+        // M6 的光照 shader 还要它，而且 W 键看背面时"哪一面是哪个颜色"仍然读得出来。
+        st.fragmentShader = sr::texturedFS;
         st.depthTest = true;
         st.depthWrite = true;
         st.cull.backfaceCull = !g_showBackfaces;
-        
+        // baseColor 是乘上去的材质 tint，不是兜底色 ⇒ 给白，否则参考图与窗口都会暗一档。
+        st.fu.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+        // 贴图与 golden 用**同一个单例**：窗口里看到的那张贴图就是参考图里那一张。
+        // 这不是偷懒，是让"我在窗口里验收过的画面"与"golden 守住的画面"是同一个东西 ——
+        // 两者各自建一张图时，改了一边的参数不会让另一边变红。
+        st.fu.texture = &sr::goldenCheckerTexture();
+        st.fu.sampler.wrapU = sr::WrapMode::ClampEdge;
+        st.fu.sampler.wrapV = sr::WrapMode::ClampEdge;   // 理由见 golden_scene.cpp 的 goldenSampler()
+        st.fu.sampler.filter = g_filter;
+        st.fu.sampler.useMip = g_useMip;
+
 
         // 物体不再自转：旋转交给轨道相机，鼠标拖拽直接改变 yaw/pitch。
         // "转相机"与"转物体"在画面上等价，但只有前者能让用户觉得自己抓住了物体。
@@ -115,7 +154,8 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     g_sink.present(target);
 
     sr::drawText(target.color, 4, 4, statusLine, fg, bg, 2);
-    sr::drawText(target.color, 4, 4 + 2 * sr::kGlyphHeightPx + 4, "P=PAUSE S=SHOT V=VIEW ESC=QUIT",
+    sr::drawText(target.color, 4, 4 + 2 * sr::kGlyphHeightPx + 4,
+                 "P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT ESC=QUIT",
                  sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
 }
 
@@ -131,13 +171,17 @@ int saveScreenshot(const sr::RenderTarget& target, const std::string& path, std:
     return 0;
 }
 
-int runGoldenWrite(const app::AppOptions& o) {
+// 两个 golden 入口共用"建离屏面 → 渲一帧 → 存图"这一段，唯一区别是**调用哪个场景函数**。
+// 场景函数以指针传入而不是复制两份：参考图必须由生产代码里的那一个函数生成，
+// 而"哪个函数生成了它"要能从打印出来的标签里读出来（标签与函数搞错的代价是一整帧白比对）。
+int writeGolden(const std::string& label, const std::string& path,
+                void (*scene)(sr::RenderTarget&, sr::FrameStats*)) {
     auto surface = app::createOffscreenSurface(sr::kGoldenWidth, sr::kGoldenHeight);
     sr::FrameStats stats;
-    sr::renderGoldenScene(surface->target(), &stats);
+    scene(surface->target(), &stats);
     std::string err;
-    if (saveScreenshot(surface->target(), o.goldenWrite, err) != 0) return 1;
-    const std::string line = "[golden] " + o.goldenWrite + " 由 " + sr::buildInfoString();
+    if (saveScreenshot(surface->target(), path, err) != 0) return 1;
+    const std::string line = "[golden] " + label + " → " + path + " 由 " + sr::buildInfoString();
     std::puts(line.c_str());
     return 0;
 }
@@ -204,6 +248,7 @@ int runWindow(const app::AppOptions& o) {
     }
     std::printf("[window] %s — %dx%d\n", sr::buildInfoString(), o.width, o.height);
     std::printf("[window] P=暂停 O=单步 S=截图 V=视图 Esc=退出\n");
+    std::printf("[window] 1=开关 mip（关掉后斜面和远处会闪） 2=采样模式 nearest/bilinear/trilinear\n");
 
     sr::RenderTarget& target = surface->target();
     sr::Timer clock;
@@ -243,6 +288,16 @@ int runWindow(const app::AppOptions& o) {
             const std::string line = std::string("[view] ") + kNames[next];
             std::puts(line.c_str());
         }
+        if (input.toggleMip) {
+            g_useMip = !g_useMip;
+            // 关掉之后斜面和远处会开始闪烁 —— 那正是 spec §8 的 M4 验收，
+            // 所以状态必须打在终端与 HUD 两处：只改画面不显示状态，没人知道现在该看什么。
+            std::printf("[mip] %s\n", g_useMip ? "开（按屏幕导数选级）" : "关（永远 level 0，会闪）");
+        }
+        if (input.cycleFilter) {
+            g_filter = nextFilter(g_filter);
+            std::printf("[filter] %s\n", filterName(g_filter));
+        }
         if (input.screenshot) {
             ++screenshotCounter;
             const std::string path = "screenshots/screenshot-" + std::to_string(screenshotCounter) + ".bmp";
@@ -267,10 +322,14 @@ int runWindow(const app::AppOptions& o) {
             sr::Timer frameTimer;
             const double fpsNow = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
             (void)camera;
-            char buf[160];
-            std::snprintf(buf, sizeof(buf), "FPS %.1f  %.2f MS  %dx%d  YAW %.2f PITCH %.2f DIST %.1f%s",
-                          fpsNow, lastMs, o.width, o.height, static_cast<double>(camera.yaw),
+            // 采样状态与相机姿态都要上 HUD：前者是"我现在该看到什么"（关 mip 该闪），
+            // 后者是"这张截图怎么用命令行复现"（--yaw/--pitch/--distance 同名字段）。
+            char buf[200];
+            std::snprintf(buf, sizeof(buf),
+                          "FPS %.1f  %.2f MS  Y %.2f P %.2f D %.1f  MIP %s  %s%s",
+                          fpsNow, lastMs, static_cast<double>(camera.yaw),
                           static_cast<double>(camera.pitch), static_cast<double>(camera.distance),
+                          g_useMip ? "ON" : "OFF", filterName(g_filter),
                           paused ? (dragging ? "  PAUSED DRAG" : "  PAUSED")
                                  : (dragging ? "  DRAG" : ""));
             renderFrame(target, phase, buf, camera);
@@ -326,7 +385,13 @@ int main(int argc, char** argv) {
         std::printf("%s", app::usageString().c_str());
         return 0;
     }
-    if (!o.goldenWrite.empty()) return runGoldenWrite(o);
+    if (!o.goldenWrite.empty()) {
+        return writeGolden("m3_cube", o.goldenWrite, sr::renderGoldenScene);
+    }
+    if (!o.goldenWriteTextured.empty()) {
+        return writeGolden("m4_textured_cube", o.goldenWriteTextured,
+                           sr::renderGoldenSceneTextured);
+    }
     if (o.offscreen) return runOffscreen(o);
     return runWindow(o);
 }
