@@ -58,6 +58,25 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"
 endif()
 
 # ---------------------------------------------------------------------------
+# 图片加载（C2 的落点）：第三方头只出现在这一个目标里。
+#   - soft_raster_core 不链接它，因此 core 无法感知 stb（grep 检查见 M4 notes）
+#   - app 与 tests 各自链它一次，避免把 image_stb.cpp 抄进两个源文件列表
+# ---------------------------------------------------------------------------
+add_library(soft_raster_loader STATIC
+  src/loader/image_stb.cpp
+  src/loader/image_tga.cpp
+)
+target_link_libraries(soft_raster_loader PUBLIC soft_raster_core)
+target_include_directories(soft_raster_loader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(soft_raster_loader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+if(MSVC)
+  target_compile_options(soft_raster_loader PRIVATE /W4 /utf-8 /MP /EHsc)
+endif()
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(soft_raster_loader PRIVATE -Wall -Wextra -ffp-contract=off)
+endif()
+
+# ---------------------------------------------------------------------------
 # 测试
 #   每个 tests/unit/*.cpp 都必须直接列进 add_executable 的源文件列表：
 #   harness 靠静态初始化自注册，若把测试做成静态库，链接器会把"没人引用"的
@@ -97,11 +116,13 @@ if(SR_BUILD_TESTS)
     tests/unit/test_sampler_bilinear.cpp
     tests/unit/test_sampler_mip.cpp
     tests/unit/test_texture_pipeline.cpp
+    tests/unit/test_image_stb.cpp
+    tests/unit/test_image_tga.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
   )
-  target_link_libraries(soft_raster_tests PRIVATE soft_raster_core)
+  target_link_libraries(soft_raster_tests PRIVATE soft_raster_core soft_raster_loader)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   # golden 参考图的路径由这里注入：CTest 的 cwd 是 build/，相对路径会指错地方。
   target_compile_definitions(soft_raster_tests PRIVATE SR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -131,7 +152,7 @@ endif()
 if(SR_BUILD_APP AND WIN32 AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/app/main.cpp)
   file(GLOB SR_APP_SOURCES CONFIGURE_DEPENDS src/app/*.cpp)
   add_executable(soft-raster ${SR_APP_SOURCES})
-  target_link_libraries(soft-raster PRIVATE soft_raster_core)
+  target_link_libraries(soft-raster PRIVATE soft_raster_core soft_raster_loader)
   target_compile_definitions(soft-raster PRIVATE SR_VERSION="${PROJECT_VERSION}")
   set_target_properties(soft-raster PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

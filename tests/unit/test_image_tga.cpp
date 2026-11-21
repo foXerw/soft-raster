@@ -1,0 +1,174 @@
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "harness.h"
+#include "loader/image_tga.h"
+#include "render/texture.h"
+
+namespace {
+
+// TGA 头 18 字节。这里只填测试关心的字段，其余为 0。
+std::vector<uint8_t> header(int type, int w, int h, int bpp, int descriptor) {
+    std::vector<uint8_t> d(18, 0);
+    d[2] = static_cast<uint8_t>(type);
+    d[12] = static_cast<uint8_t>(w & 0xFF);  d[13] = static_cast<uint8_t>((w >> 8) & 0xFF);
+    d[14] = static_cast<uint8_t>(h & 0xFF);  d[15] = static_cast<uint8_t>((h >> 8) & 0xFF);
+    d[16] = static_cast<uint8_t>(bpp);
+    d[17] = static_cast<uint8_t>(descriptor);
+    return d;
+}
+
+void appendPixel(std::vector<uint8_t>& d, int r, int g, int b, int a) {
+    // TGA 的字节序是 **B,G,R**（与 BMP 同源），我们的 ImageRGBA8 约定是 R,G,B,A
+    d.push_back(static_cast<uint8_t>(b));
+    d.push_back(static_cast<uint8_t>(g));
+    d.push_back(static_cast<uint8_t>(r));
+    if (a >= 0) d.push_back(static_cast<uint8_t>(a));
+}
+
+bool parse(const std::vector<uint8_t>& bytes, sr::ImageRGBA8& out, std::string& err) {
+    return sr::parseTga(bytes.data(), bytes.size(), out, err);
+}
+
+// 与 test_image_stb.cpp 同一条护栏：解析失败时 img 是空的，
+// 而对空 vector 取 rgba[0] 会让**整个测试进程** abort —— 一次崩溃吃掉所有用例的结果。
+bool hasBytes(const sr::ImageRGBA8& img, int n) {
+    SR_ASSERT_EQ(static_cast<int>(img.rgba.size()), n);
+    return static_cast<int>(img.rgba.size()) >= n;
+}
+
+}  // namespace
+
+SR_TEST(tga_24bit_bottom_up_storage_becomes_top_down) {
+    // 2x2，type 2（未压缩 truecolor），descriptor = 0 ⇒ **行自底向上存储**（TGA 的默认）。
+    // 输出要求 top-down（C8），所以文件里的第一行必须落到输出的**最后一行**。
+    std::vector<uint8_t> d = header(2, 2, 2, 24, 0);
+    appendPixel(d, 0, 0, 255, -1);      // 存储行 0 = 图像**下**行：蓝
+    appendPixel(d, 0, 255, 0, -1);
+    appendPixel(d, 255, 0, 0, -1);      // 存储行 1 = 图像**上**行：红
+    appendPixel(d, 0, 255, 255, -1);
+
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT(parse(d, img, err));
+    SR_ASSERT_EQ(img.width, 2);
+    SR_ASSERT_EQ(img.height, 2);
+    if (!hasBytes(img, 2 * 2 * 4)) return;
+    SR_ASSERT_EQ(img.rgba[0], 255); SR_ASSERT_EQ(img.rgba[1], 0);   SR_ASSERT_EQ(img.rgba[2], 0);
+    SR_ASSERT_EQ(img.rgba[3], 255);                                  // 没有 alpha 通道 ⇒ 补成不透明
+    // 行跨度是 width*4 = 8，不是 4 —— 上一版把"第二行"当成了 offset 4，
+    // 那其实是第一行的第二个像素（黄），于是实现是对的、测试是错的。
+    SR_ASSERT_EQ(img.rgba[4], 0);   SR_ASSERT_EQ(img.rgba[5], 255); SR_ASSERT_EQ(img.rgba[6], 255);
+    const size_t lastRow = 8;                                         // (h-1) * w * 4
+    SR_ASSERT_EQ(img.rgba[lastRow], 0); SR_ASSERT_EQ(img.rgba[lastRow + 1], 0);
+    SR_ASSERT_EQ(img.rgba[lastRow + 2], 255);                        // 下行第一个 = 蓝
+}
+
+SR_TEST(tga_descriptor_top_down_bit_is_honored) {
+    std::vector<uint8_t> d = header(2, 2, 2, 24, 0x20);   // bit5 = 1 ⇒ 存储顺序已经是 top-down
+    appendPixel(d, 255, 0, 0, -1);
+    appendPixel(d, 0, 255, 0, -1);
+    appendPixel(d, 0, 0, 255, -1);
+    appendPixel(d, 0, 255, 255, -1);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT(parse(d, img, err));
+    if (!hasBytes(img, 2 * 2 * 4)) return;
+    SR_ASSERT_EQ(img.rgba[0], 255); SR_ASSERT_EQ(img.rgba[2], 0);     // 第一行第一个 = 红
+    SR_ASSERT_EQ(img.rgba[4], 0);   SR_ASSERT_EQ(img.rgba[5], 255);   // 第一行第二个 = 绿
+    SR_ASSERT_EQ(img.rgba[8], 0);   SR_ASSERT_EQ(img.rgba[10], 255);  // 第二行第一个 = 蓝
+}
+
+SR_TEST(tga_32bit_keeps_alpha) {
+    std::vector<uint8_t> d = header(2, 1, 1, 32, 0x20);
+    appendPixel(d, 10, 20, 30, 128);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT(parse(d, img, err));
+    if (!hasBytes(img, 4)) return;
+    SR_ASSERT_EQ(img.rgba[0], 10);
+    SR_ASSERT_EQ(img.rgba[1], 20);
+    SR_ASSERT_EQ(img.rgba[2], 30);
+    SR_ASSERT_EQ(img.rgba[3], 128);        // alpha 原样保留，不做 gamma、也不做 premultiply
+}
+
+SR_TEST(tga_rle_decodes_run_and_raw_packets) {
+    // type 10 = RLE truecolor。包头的 bit7 是 run 标志，低 7 位是"含本像素共 count 个"，
+    // 所以 0x82 表示"紧跟的 1 个像素重复 3 次"，0x01 表示"紧跟 2 个原始像素"。
+    std::vector<uint8_t> d = header(10, 5, 1, 24, 0x20);
+    d.push_back(0x82);
+    appendPixel(d, 255, 0, 0, -1);          // 3 × 红
+    d.push_back(0x01);
+    appendPixel(d, 0, 255, 0, -1);          // 2 × (绿, 蓝)
+    appendPixel(d, 0, 0, 255, -1);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT(parse(d, img, err));
+    SR_ASSERT_EQ(img.width, 5);
+    SR_ASSERT_EQ(img.height, 1);
+    if (!hasBytes(img, 5 * 4)) return;
+    for (int x = 0; x < 3; ++x) {
+        SR_ASSERT_EQ(img.rgba[x * 4 + 0], 255);
+        SR_ASSERT_EQ(img.rgba[x * 4 + 2], 0);
+    }
+    SR_ASSERT_EQ(img.rgba[3 * 4 + 1], 255);   // x=3 绿
+    SR_ASSERT_EQ(img.rgba[4 * 4 + 2], 255);   // x=4 蓝
+}
+
+SR_TEST(tga_truncated_input_fails_instead_of_reading_past_the_end) {
+    // 声明 8x8 但只给了头 + 几个像素。**必须**返回 false，而不是读出越界内存 ——
+    // 加载器处理的是用户/网络给来的文件，这条是纯粹的健壮性底线。
+    std::vector<uint8_t> d = header(2, 8, 8, 24, 0x20);
+    appendPixel(d, 1, 2, 3, -1);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT_FALSE(parse(d, img, err));
+    SR_ASSERT_FALSE(err.empty());
+    SR_ASSERT_EQ(img.width, 0);              // 失败不留半成品
+
+    // RLE 的截断走的是另一条循环，也要单独喂一遍
+    std::vector<uint8_t> r = header(10, 8, 8, 24, 0x20);
+    r.push_back(0x7F);                        // 声称有 128 个原始像素，后面什么都没有
+    sr::ImageRGBA8 img2;
+    std::string err2;
+    SR_ASSERT_FALSE(parse(r, img2, err2));
+    SR_ASSERT_FALSE(err2.empty());
+}
+
+SR_TEST(tga_rejects_unsupported_types_and_dimensions) {
+    sr::ImageRGBA8 img;
+    std::string err;
+    // 调色板型（1/9）与 16bpp：本项目不支持，且要说清为什么（返回 false 比画错颜色诚实）
+    std::vector<uint8_t> cmap = header(1, 1, 1, 8, 0x20);
+    cmap[1] = 1;                              // color map type
+    cmap.push_back(0);
+    SR_ASSERT_FALSE(parse(cmap, img, err));
+    SR_ASSERT_FALSE(err.empty());
+
+    std::vector<uint8_t> bpp16 = header(2, 1, 1, 16, 0x20);
+    bpp16.push_back(0); bpp16.push_back(0);
+    SR_ASSERT_FALSE(parse(bpp16, img, err));
+    SR_ASSERT_FALSE(err.empty());
+
+    std::vector<uint8_t> zeroW = header(2, 0, 4, 24, 0x20);
+    SR_ASSERT_FALSE(parse(zeroW, img, err));
+    SR_ASSERT_FALSE(err.empty());
+
+    std::vector<uint8_t> tooShort = {1, 2, 3};
+    SR_ASSERT_FALSE(parse(tooShort, img, err));
+    SR_ASSERT_FALSE(err.empty());
+}
+
+SR_TEST(tga_grayscale_replicates_into_rgb) {
+    std::vector<uint8_t> d = header(3, 2, 1, 8, 0x20);
+    d.push_back(40);
+    d.push_back(200);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT(parse(d, img, err));
+    if (!hasBytes(img, 2 * 4)) return;
+    SR_ASSERT_EQ(img.rgba[0], 40); SR_ASSERT_EQ(img.rgba[1], 40); SR_ASSERT_EQ(img.rgba[2], 40);
+    SR_ASSERT_EQ(img.rgba[3], 255);
+    SR_ASSERT_EQ(img.rgba[4], 200); SR_ASSERT_EQ(img.rgba[6], 200);
+}
