@@ -196,8 +196,8 @@ std::string usageString() {
            "  --bench <N>        离屏跑 N 帧并打印分阶段耗时（隐含 --offscreen）\n"
            "  --backend <a|b>    a=标量逐像素，b=tile+多线程（M8 起生效）\n"
            "  --threads <N>      Backend B 的线程数，0=用满逻辑核\n"
-           "  --gradient         背景用全屏渐变（默认纯色；渐变每帧要吃 width*height 次编码）
-"
+           "  --gradient         背景用全屏渐变（默认纯色；渐变每帧要吃 width*height 次编码）"
+           "\n"
            "  --no-fit           载入模型后不自动调整相机\n"
            "  --help, -h         显示本帮助\n";
 }
