@@ -6,6 +6,24 @@
 
 namespace sr {
 
+// C4723（"potential divide by 0"）在本头里是 MSVC 数据流分析的**假阳性**：
+// PlaneEq::fromTriangle 上面那行 `if (!(std::fabs(det) > 1e-20f)) return f;` 已经把 0 排除掉了。
+// 不能把守卫改成 `if (std::fabs(det) < 1e-20f)` —— 那个写法会让 **NaN** 漏过去做除法
+// （NaN 的任何比较都是 false），症状是一个 NaN 顺着插值污染一整块像素。
+// `!(...)` 是故意的，测试 plane_eq_on_a_nan_triangle_is_degenerate_not_nan 钉着它
+// （把守卫改成 naive 形式后那条测试 3 处断言全红，实测过）。
+//
+// 试过两种更窄的写法，都无效：#pragma warning(suppress: 4723) 与把 push/disable/pop
+// 只包住那两行除法 —— C4723 是后端在函数被内联的位置报的，行级 pragma 压不住。
+// 于是范围放大到本头：代价是本头里的**新**除零也会被静默，只有两个函数，且上面这条
+// 说明就是它的解禁说明。若哪天本头长出新除法，请改用别的策略（比如把守卫重写成
+// 编译器能证明的形式，或在调用点检查）。
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4723)
+#endif
+
+
 // 三角形内部判定的两个基本工具。它们是整个光栅化的数学核心，所以推导写在这里而不是笔记里
 // （设计文档 A1：抽象必须止步于阶段边界，阶段内部要直白）。
 //
@@ -85,5 +103,9 @@ struct PlaneEq {
 
     float sample(float x, float y) const { return n0 * x + n1 * y + c; }
 };
+
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 }  // namespace sr

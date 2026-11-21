@@ -1,6 +1,7 @@
 #include "render/plane_eq.h"
 
 #include <cmath>
+#include <limits>
 
 #include "harness.h"
 #include "math/vec.h"
@@ -34,6 +35,19 @@ SR_TEST(plane_eq_on_a_degenerate_triangle_is_reported_not_solved) {
     const PlaneEq f = PlaneEq::fromTriangle(a, 1.0f, b, 2.0f, c, 3.0f);
     SR_ASSERT(f.degenerate);
     SR_ASSERT(std::isfinite(f.n0) && std::isfinite(f.n1) && std::isfinite(f.c));
+}
+
+SR_TEST(plane_eq_on_a_nan_triangle_is_degenerate_not_nan) {
+    // 这条是给 M4.7 的守卫重写做**钉住**用的：为了压掉 MSVC 的 C4723（potential divide by 0），
+    // 最省事的改法是把 `!(fabs(det) > eps)` 写成 `fabs(det) < eps` —— 但那样 NaN 会**漏过去**
+    // 做除法，症状是一个 NaN 像素顺着 blend 污染一整块区域。
+    // 所以"NaN 必须走退化分支"要有一条测试钉住，否则压告警的那次改动会静默改掉语义。
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const PlaneEq f = PlaneEq::fromTriangle(Vec2{nan, 0.0f}, 1.0f, Vec2{1.0f, 1.0f}, 2.0f,
+                                            Vec2{0.0f, 1.0f}, 3.0f);
+    SR_ASSERT(f.degenerate);
+    SR_ASSERT(std::isfinite(f.n0) && std::isfinite(f.n1) && std::isfinite(f.c));
+    SR_ASSERT(std::isfinite(f.sample(0.5f, 0.5f)));
 }
 
 SR_TEST(edge_function_is_positive_inside_for_a_clockwise_triangle) {
