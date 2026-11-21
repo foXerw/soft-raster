@@ -56,7 +56,7 @@
   uv 调试图是**数据**，解码会把 0.5 变成 0.73，那种图必须能声明成线性）。
 
 **Steps:**
-- [ ] **Step 1: 写失败测试** — 断言：
+- [x] **Step 1: 写失败测试** — 断言：
   - `sampleNearest` 在 `u=0.5/W, v=0.5/H`（第 0 个纹素中心）取回的正是那个纹素；在 `u=(W-0.5)/W` 取回最后一个。
   - **off-by-half 的判别**：`u = 0.5/W - epsilon` 与 `u = 0.5/W + epsilon` 必须落在**相邻两个不同**纹素上（证明分界线在纹素边界而不是纹素中心）。
   - `Repeat`：`u = 1.25` 与 `u = 0.25` 取回同一个纹素；`u = -0.25` 与 `u = 0.75` 同一个（**负数取模**是 C++ `%` 的坑，必须单独 pin）。
@@ -64,35 +64,35 @@
   - 非方形纹理（8x2）：u 用宽、v 用高，两者不串（把 `x` 与 `y` 写成同一个尺寸是个真会犯的错）。
   - sRGB 解码：一张存着 `0x80` 的颜色纹理，`sampleNearest().r ≈ srgb8ToLinear(0x80)`（≈0.2158）而**不是** 0x80/255（0.5019）；`srgb=false` 的纹理则必须是 0.5019。alpha 两种情况都等于 `a/255`。
   - `makeTexture` 之后 `levels` 与 `generateMipChain` 一致（链尾 1x1，见 Ruling 24）。
-- [ ] **Step 2: 跑，确认失败**（编译失败 = 红，因为新 API 不存在）
-- [ ] **Step 3: 实现**（`wrapCoord` 用 `i - floor2(i/count)*count` 风格而不是 `%`，负数安全；`sampleNearest` 走 `Texture::texel`，越界返回 nullptr 时**报告而不是静默取 0**——那意味着 wrap 算错了）
-- [ ] **Step 4: 跑，全绿** + MSVC/g++ 两侧零警告 + C4 grep CLEAN
-- [ ] **Step 5: 区分力验证** — 把 `floor(u*W)` 改成 `int(u*W)`（对负 UV 行为不同）与把 `%` 当成 wrap 用（负数）两种变异，各自必须让某条断言变红
-- [ ] **Step 6: Commit** `feat(render): texture wrap + nearest sampling with the texel-center convention pinned`
+- [x] **Step 2: 跑，确认失败**（编译失败 = 红，因为新 API 不存在）
+- [x] **Step 3: 实现**（`wrapCoord` 用 `i - floor2(i/count)*count` 风格而不是 `%`，负数安全；`sampleNearest` 走 `Texture::texel`，越界返回 nullptr 时**报告而不是静默取 0**——那意味着 wrap 算错了）
+- [x] **Step 4: 跑，全绿** + MSVC/g++ 两侧零警告 + C4 grep CLEAN
+- [x] **Step 5: 区分力验证** — 把 `floor(u*W)` 改成 `int(u*W)`（对负 UV 行为不同）与把 `%` 当成 wrap 用（负数）两种变异，各自必须让某条断言变红
+- [x] **Step 6: Commit** `feat(render): texture wrap + nearest sampling with the texel-center convention pinned`
 
 ### Task 4.3: `sampleBilinear`（跨边界的一致性）
 
-- [ ] 测试：四个纹素分别是 0/64/128/192 时，纹素中心取回原值，纹素边界取回两两平均；
+- [x] 测试：四个纹素分别是 0/64/128/192 时，纹素中心取回原值，纹素边界取回两两平均；
   **跨 Repeat 边界**（u 接近 1.0 时第二个 taps 回到索引 0）与 `ClampEdge`（同一位置钳在最后一个）必须分别断言——
   这两个在边界处的行为差异是 bilinear 最容易"看起来对"的地方。
-- [ ] 测试：线性插值发生在**线性空间**（一张左黑右白的 sRGB 图，中点值应接近 `srgb8ToLinear` 后的平均，而不是 0.5）
-- [ ] 实现 → 全绿 → 变异验证（先把权重 `1-f` 与 `f` 写反，必须有断言红）→ Commit
+- [x] 测试：线性插值发生在**线性空间**（一张左黑右白的 sRGB 图，中点值应接近 `srgb8ToLinear` 后的平均，而不是 0.5）
+- [x] 实现 → 全绿 → 变异验证（先把权重 `1-f` 与 `f` 写反，必须有断言红）→ Commit
 
 ### Task 4.4: `mipLevelFromGradients` + `sampleTrilinear`
 
-- [ ] Ruling B 落地：`FragmentInput` 改名 `gradU/gradV`；新增
+- [x] Ruling B 落地：`FragmentInput` 改名 `gradU/gradV`；新增
   `int mipLevelFromGradients(float texelsU, float texelsV, int levelCount, Vec2 gradU, Vec2 gradV)`
-- [ ] 测试：gradU/gradV 传反（转置）必须让某条断言变红 —— 构造一个 u 沿 x 变、v 沿 y 变的非对称用例
-- [ ] 测试：trilinear 在 `rho` 恰好跨级时 = 相邻两级的线性混合（取 1.5 级处 = 两级各半）
-- [ ] 测试：`useMip=false` 时永远走 level 0（`1` 键的语义）
-- [ ] 实现 → 全绿 → Commit
+- [x] 测试：gradU/gradV 传反（转置）必须让某条断言变红 —— 构造一个 u 沿 x 变、v 沿 y 变的非对称用例
+- [x] 测试：trilinear 在 `rho` 恰好跨级时 = 相邻两级的线性混合（取 1.5 级处 = 两级各半）
+- [x] 测试：`useMip=false` 时永远走 level 0（`1` 键的语义）
+- [x] 实现 → 全绿 → Commit
 
 ### Task 4.5: 贴图进管线（端到端）
 
-- [ ] `FragmentUniforms` 加 `const Texture* texture; WrapMode; FilterMode; bool useMip;`；`builtin_shaders` 加 `texturedFS`（读 `in.v.uv` → 采样 → 乘 `baseColor`）
-- [ ] 测试：`tests/unit/test_texture_pipeline.cpp` —— 离屏画一个 uv 已知的三角形/四边形，断言中心像素 == 期望纹素、四个角分别落在四个角的纹素上；**旋转 45° 后贴图跟着转**（断言某条对角线上的采样顺序变了，而不是只断言"没崩"）
-- [ ] golden：`assets/golden/` 新增 M4 参考图（320x180，同 M3 约定），并肉眼看过一次
-- [ ] Commit
+- [x] `FragmentUniforms` 加 `const Texture* texture; WrapMode; FilterMode; bool useMip;`；`builtin_shaders` 加 `texturedFS`（读 `in.v.uv` → 采样 → 乘 `baseColor`）
+- [x] 测试：`tests/unit/test_texture_pipeline.cpp` —— 离屏画一个 uv 已知的三角形/四边形，断言中心像素 == 期望纹素、四个角分别落在四个角的纹素上；**旋转 45° 后贴图跟着转**（断言某条对角线上的采样顺序变了，而不是只断言"没崩"）
+- [x] golden：`assets/golden/` 新增 M4 参考图（320x180，同 M3 约定），并肉眼看过一次
+- [x] Commit
 
 ### Task 4.6: stb_image 接入 + 手写 TGA
 
