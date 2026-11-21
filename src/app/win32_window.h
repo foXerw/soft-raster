@@ -78,6 +78,9 @@ class Window {
     // 留一份全局可变态。pumpInput 之外到达的消息（系统自己发的重绘等）没有归属帧，
     // 直接丢弃 —— 让它们写进"下一帧"会让一次拖动的残留在下一次 pump 里冒出来。
     InputState* m_inputSink = nullptr;
+    // 跨帧的持续状态。pumpInput 每帧先把它播种进快照，
+    // 所以"按住但没移动"的那些帧依然报告 leftPressed（见 input.h 的 MouseButtons）。
+    MouseButtons m_buttons;
 };
 
 }  // namespace app

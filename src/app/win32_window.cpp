@@ -155,18 +155,22 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             m_hasCursor = true;
             m_lastCursor = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
             SetCapture(hwnd);
+            m_buttons.setLeft(true);
             if (in != nullptr) in->leftPressed = true;
             return 0;
         case WM_LBUTTONUP:
             ReleaseCapture();
+            m_buttons.setLeft(false);
             if (in != nullptr) in->leftPressed = false;
             return 0;
         case WM_RBUTTONDOWN:
             m_hasCursor = true;
             m_lastCursor = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            m_buttons.setRight(true);
             if (in != nullptr) in->rightPressed = true;
             return 0;
         case WM_RBUTTONUP:
+            m_buttons.setRight(false);
             if (in != nullptr) in->rightPressed = false;
             return 0;
         case WM_MOUSEMOVE: {
@@ -214,7 +218,8 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 bool Window::pumpInput(InputState& out) {
-    out = InputState{};  // 每帧的输入快照从空白开始
+    out = InputState{};   // 位移与"本帧发生过什么"每帧重置
+    m_buttons.seed(out);  // 按键的持续状态必须跨帧：漏掉这一行的症状就是"拖动一卡一卡"
     m_inputSink = &out;
 
     MSG m{};
