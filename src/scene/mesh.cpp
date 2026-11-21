@@ -32,9 +32,43 @@ constexpr Vec4 kFaceColors[6] = {
 };
 
 void appendQuad(Mesh& m, const QuadFace& f, bool perFaceNormals, const Vec4& faceColor) {
+    // uv 按**角在四边形里的角色**赋，不是按下标的位模式。
+    // 之前写的是 `{i&1, i>>1}`，对环序四角给出 (0,0)(1,0)(0,1)(1,1) ——
+    // 连起来是个蝴蝶结（uv 多边形自交、有向面积为 0），于是每张贴图沿一条反对角线
+    // 翻折回去。M2/M3 看不出来，因为没有任何 shader 读 cube 的 uv；M4.7 一接纹理就暴露，
+    // 症状还是最难归因的那种："贴图看起来是贴上了，只是哪里怪怪的"。
+    // 由 test_mesh 的 cube_face_uvs_follow_the_face_instead_of_folding_over_itself 钉住。
+    //
+    // uv 由**角在这一面局部坐标系里的角色**决定，不是按它在 faces[] 表里的下标查表。
+    //
+    // 为什么必须这样：六个面的角序都是绕序的，但起点不同 —— +Z/-Z 从底边的左角起步
+    // （下、下、上、上），+X/-X 从左边起步（下、上、上、下）。同一张按下标查的 uv 表
+    // 在 ±X 上会让贴图的 u 轴指向世界的上方，也就是那两面被转了 90°；双色棋盘转 90°
+    // 看不出来，带角标记的贴图看得出来（这个 90° 从 M2 就一直在）。
+    //
+    // 于是全栈只有一条方向规则：图像第 0 行 = 顶部、采样器 v=0 = 第 0 行、
+    // mesh 的 v=0 = 这一面的顶边 ⇒ **贴图与图像同向**。
+    // OBJ 的 vt 原点在左下，那一次 `v = 1 - v` 由 M5 的载入器负责（格式的差异在格式的
+    // 门口处理掉，不留进管线）。
+    // 守门：test_mesh 的 cube_uv_follows_each_faces_own_up_and_right
+    // 与 test_golden_scene_textured 的 the_texture_reads_right_side_up_on_screen。
+    //
+    // 顶面/底面没有 +Y 可当"上"，所以这里**选**一个并写下来：+Y 面朝 -Z、-Y 面朝 +Z。
+    const bool side = std::fabs(f.normal.y) < 0.5f;
+    const Vec3 up = side ? Vec3{0.0f, 1.0f, 0.0f}
+                         : (f.normal.y > 0.0f ? Vec3{0.0f, 0.0f, -1.0f} : Vec3{0.0f, 0.0f, 1.0f});
+    // 从外面看的"右" = 上 × 法线（右手系：+Y × +Z = +X，正对 +Z 面时右就是 +X）。
+    const Vec3 right = normalize(cross(up, f.normal));
+    const Vec3 center{(f.v[0].x + f.v[1].x + f.v[2].x + f.v[3].x) * 0.25f,
+                      (f.v[0].y + f.v[1].y + f.v[2].y + f.v[3].y) * 0.25f,
+                      (f.v[0].z + f.v[1].z + f.v[2].z + f.v[3].z) * 0.25f};
+
     uint32_t q[4];
     for (int i = 0; i < 4; ++i) {
-        const Vec2 uv{static_cast<float>(i & 1), static_cast<float>(i >> 1)};
+        // 六个面都是轴对齐的正方形，所以 d 在 right/up 上的投影非零、符号就是角色。
+        // （若哪天用这个函数塞任意四边形，这里要换成重心坐标而不是取符号。）
+        const Vec3 d = f.v[i] - center;
+        const Vec2 uv{dot(d, right) > 0.0f ? 1.0f : 0.0f, dot(d, up) > 0.0f ? 0.0f : 1.0f};
         uint32_t found = 0xFFFFFFFFu;
         if (!perFaceNormals) {
             // 共享顶点：法线取归一化位置（立方体角上是三个面的平均方向）。
