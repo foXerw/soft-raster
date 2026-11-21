@@ -19,6 +19,11 @@ struct Texture {
     int height = 0;
     std::vector<ImageRGBA8> levels;
 
+    // true = 字节是 **sRGB 编码的颜色数据**（PNG/JPG/TGA 存的都是这个），采样时解码到线性空间。
+    // false = 字节是**数据**（uv 调试图、M6 之后的法线贴图），解码会把 0.5 变成 0.73，
+    // 于是"uv 视图"不再是 uv 视图。这就是 GPU 区分 SRGB8_ALPHA8 与 RGBA8 的理由。
+    bool srgb = true;
+
     int levelCount() const { return static_cast<int>(levels.size()); }
     const uint8_t* texel(int level, int x, int y) const;
 };
