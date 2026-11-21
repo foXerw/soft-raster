@@ -33,7 +33,8 @@ Mesh makeCube(float size, bool perFaceNormals);
 // 面色测试要的是**可区分**，插值测试要的是**不连续就看得见**，两者是相反的要求，
 // 所以这里给一个显式的切换而不是让 makeCube 同时满足。
 void applyPositionColors(Mesh& m);
-Mesh makeUVSphere(float radius, int stacks, int slices, bool duplicatedPoleVerts = true);
+// 极点顶点按经度重复：共享极点会让 uv 在接缝处从 1 跳回 0，M4 的纹理会拉出一条线。
+Mesh makeUVSphere(float radius, int stacks, int slices);
 Mesh makeTorus(float majorRadius, float minorRadius, int ringSegments, int sideSegments);
 
 }  // namespace sr

@@ -81,12 +81,12 @@ Mesh makeCube(float size, bool perFaceNormals) {
     return m;
 }
 
-Mesh makeUVSphere(float radius, int stacks, int slices, bool duplicatedPoleVerts) {
+Mesh makeUVSphere(float radius, int stacks, int slices) {
     Mesh m;
     if (stacks < 2) stacks = 2;
     if (slices < 3) slices = 3;
 
-    const int vertsPerRing = duplicatedPoleVerts ? (slices + 1) : (slices + 1);
+    const int vertsPerRing = slices + 1;   // 极点每经度一份（duplicatedPoleVerts 曾在这里两个分支同值，是死参数）
     for (int i = 0; i <= stacks; ++i) {
         const float phi = kPi * static_cast<float>(i) / static_cast<float>(stacks);
         const float sy = std::cos(phi);

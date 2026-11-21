@@ -38,24 +38,21 @@ struct EdgeFunc {
 
     float evaluate(const Vec2& p) const { return n.x * p.x + n.y * p.y + c; }
 
-    // top-left 填充规则。两条判据都用"第三顶点相对这条边的位置"来表达，
-    // 这样规则与 y 轴方向、与三角形绕向的关系是**显式**的：
-    //   顶边：边水平，且第三顶点在它下方（top-down 里 y 更大）。
-    //   左边：边不水平，且第三顶点在边的右侧 ⇒ 这条边构成三角形的左轮廓。
-    // 权威性由 test_raster_scalar.cpp 里那两个"正方形沿对角线劈分"的测试判定：
-    // 缝隙 ⇒ 覆盖总和 < 像素数；双写 ⇒ 总和 > 像素数。
-    bool edgeIsTopOrLeft(const Vec2& opposite) const {
-        const bool horizontal = (p0.y == p1.y);
-        if (horizontal) return opposite.y > p0.y;
-        return opposite.x > p0.x || opposite.x > p1.x;
-    }
+    // top-left 填充规则。判据直接用**内侧法线 n**（n 已经通过 sign 吸收了绕向），
+    // 所以它与顶点顺序、与"第三顶点在哪里"都无关：
+    //   左边 ⟺ n.x > 0        内侧朝右 ⇒ 这条边是三角形的左轮廓
+    //   顶边 ⟺ n.x == 0 && n.y > 0   内侧朝下（top-down 里 y 增大是下）⇒ 这条边是上轮廓
+    // 原先写成 "opposite.x > p0.x || opposite.x > p1.x"，那不是侧向判定：
+    // 陡边（|dx| < |dy|）上会同时产生缝隙与双写（复审 C3），
+    // 而两条 ±45° 对角线测试恰好落在 opposite.x == min 的边界上，看不见它。
+    bool edgeIsTopOrLeft() const { return n.x > 0.0f || (n.x == 0.0f && n.y > 0.0f); }
 
-    // 边界像素恰好被一个三角形拥有：> 0 一定进；== 0 只有顶边/左边才进。
-    bool covers(const Vec2& p, const Vec2& opposite) const {
+    // 边界像素恰好被一个三角形拥有：evaluate > 0 一定进；== 0 只有顶边/左边才进。
+    bool covers(const Vec2& p) const {
         const float v = evaluate(p);
         if (v > 0.0f) return true;
         if (v < 0.0f) return false;
-        return edgeIsTopOrLeft(opposite);
+        return edgeIsTopOrLeft();
     }
 };
 

@@ -56,6 +56,8 @@ inline GeomReject buildTriangleGeometryChecked(const Vec2 in[3], int targetWidth
     const float minY = std::min({in[0].y, in[1].y, in[2].y});
     const float maxY = std::max({in[0].y, in[1].y, in[2].y});
 
+    // 像素中心是 (x + 0.5)，所以"包含 min/max"的整数行是 floor(min-0.5) .. ceil(max-0.5)。
+    // 这是保守的超集：宁可多算几列，也不能漏列。
     Rect r;
     r.x0 = static_cast<int>(std::floor(minX - 0.5f));
     r.x1 = static_cast<int>(std::ceil(maxX - 0.5f));
@@ -80,12 +82,9 @@ inline int forEachCoveredPixel(const TriangleGeom& g, Fn&& paint) {
         for (int x = g.extent.x0; x <= g.extent.x1; ++x) {
             // 像素中心：整数像素 (x, y) 的中心是 (x + 0.5, y + 0.5)
             const Vec2 p{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
-            const bool c0 = g.edges[0].covers(p, g.v[2]);
-            if (!c0) continue;
-            const bool c1 = g.edges[1].covers(p, g.v[0]);
-            if (!c1) continue;
-            const bool c2 = g.edges[2].covers(p, g.v[1]);
-            if (!c2) continue;
+            if (!g.edges[0].covers(p)) continue;
+            if (!g.edges[1].covers(p)) continue;
+            if (!g.edges[2].covers(p)) continue;
             ++covered;
             paint(x, y);
         }

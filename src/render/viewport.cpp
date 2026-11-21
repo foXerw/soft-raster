@@ -15,8 +15,8 @@ ScreenVertex Viewport::project(const ClipVertex& cv) const {
     s.depth = ndcZ * 0.5f + 0.5f;
     s.w = cv.clip.w;
     s.invW = invW;
-    // vOverW 存的是 v/w，乘回 w 得到未除的 varying。
-    s.v = cv.vOverW * cv.clip.w;
+    // v 是未除的属性；除法只在这里发生一次。
+    s.v = cv.v;
     return s;
 }
 

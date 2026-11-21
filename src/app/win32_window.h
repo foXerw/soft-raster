@@ -45,6 +45,9 @@ class Window {
     // 把当前选在 memoryDc 里的位图 blit 到窗口。返回 BitBlt 的成败。
     bool blitMemoryToWindow(int width, int height, std::string& err);
     void requestRepaint();
+    // 把当前选进 memoryDc 的位图换回原来的（必须在 DIB 被 DeleteObject 之前做，
+    // 否则 DeleteObject 对一个仍被选中的位图会失败 —— 复审 I5 的泄漏）。
+    void deselectFromMemory();
 
     int width() const { return m_width; }
     int height() const { return m_height; }

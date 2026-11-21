@@ -14,7 +14,7 @@ constexpr float kEps = 1e-6f;
 sr::ClipVertex makeCV(float x, float y, float z, float w, float uOverW) {
     sr::ClipVertex cv;
     cv.clip = sr::Vec4{x, y, z, w};
-    cv.vOverW.color = sr::Vec4{uOverW, 0, 0, 1};
+    cv.v.color = sr::Vec4{uOverW, 0, 0, 1};
     return cv;
 }
 
@@ -56,7 +56,7 @@ SR_TEST(clip_keeps_a_fully_inside_triangle_unchanged) {
     for (int i = 0; i < 3; ++i) {
         SR_ASSERT_NEAR(out[i].clip.x, in[i].clip.x, 1e-6f);
         SR_ASSERT_NEAR(out[i].clip.y, in[i].clip.y, 1e-6f);
-        SR_ASSERT_NEAR(out[i].vOverW.color.x, in[i].vOverW.color.x, 1e-6f);
+        SR_ASSERT_NEAR(out[i].v.color.x, in[i].v.color.x, 1e-6f);
     }
 }
 
@@ -110,14 +110,39 @@ SR_TEST(clip_across_posX_produces_the_hand_derived_result) {
         hasQ |= isQ;
         // 两个交点必须正好贴在平面上（x == w）
         if (isP || isQ) SR_ASSERT_NEAR(c.x, c.w, 1e-6f);
-        // 交点上的 uOverW 必须是 2 —— 这条证明 vOverW 与 clip 用的是同一个 t（Review Focus 2）
-        if (isP || isQ) SR_ASSERT_NEAR(out[i].vOverW.color.x, 2.0f, 1e-5f);
+        // 交点上的 uOverW 必须是 2 —— 这条证明 v 与 clip 用的是同一个 t（Review Focus 2）
+        if (isP || isQ) SR_ASSERT_NEAR(out[i].v.color.x, 2.0f, 1e-5f);
     }
     SR_ASSERT(hasB && hasC && hasP && hasQ);
 
     const float area = polygonAreaXY(out, n);
     SR_ASSERT_NEAR(area, 4.0f / 3.0f, 1e-5f);
     SR_ASSERT_NEAR(area / 1.5f, 8.0f / 9.0f, 1e-5f);
+}
+
+SR_TEST(clip_interpolates_the_undivided_attribute_across_varying_w) {
+    // 复审 C2 的守门测试。原先这条测试不存在，所以"裁剪插值 attr/w"这个错误实现
+    // 一路全绿：另一条精确参考用例里所有 w 都等于 1，attr/w 在 w 恒定时**就是**线性的，
+    // 结构上抓不到这个 bug。
+    // 构造：边 A→B 上 d = w - x，取 d_A = -0.5、d_B = +0.5 ⇒ t = 0.5，交点 w = 1.5、x = 1.5。
+    //   A: w=1, x=1.5, attr=0      B: w=2, x=1.5, attr=3
+    //   正确：attr = lerp(0,3,0.5) = 1.5，w = 1.5 ⇒ attr/w = 1.0
+    //   错误（插值 attr/w）：lerp(0/1, 3/2, 0.5) = 0.75
+    const sr::ClipVertex in[3] = {makeCV(1.5f, 0.0f, 0, 1.0f, 0), makeCV(1.5f, 1.0f, 0, 2.0f, 3),
+                                  makeCV(0.0f, -1.0f, 0, 2.0f, 0)};
+    sr::ClipVertex out[sr::kMaxClippedVerts];
+    const int n = sr::clipPolygonToFrustum(in, out);
+    SR_ASSERT(n >= 4);
+    bool checked = false;
+    for (int i = 0; i < n; ++i) {
+        // 这条边与另两条边各产生一个交点，必须挑对那个：A→B 的交点在 y = 0.5。
+        if (std::fabs(out[i].clip.y - 0.5f) > 1e-5f) continue;
+        SR_ASSERT_NEAR(out[i].clip.w, 1.5f, 1e-5f);
+        SR_ASSERT_NEAR(out[i].v.color.x, 1.5f, 1e-5f);          // 未除 w 的属性
+        SR_ASSERT_NEAR(out[i].v.color.x / out[i].clip.w, 1.0f, 1e-5f);   // 投影后应当是 1.0
+        checked = true;
+    }
+    SR_ASSERT(checked);   // 没找到交点就等于什么都没测
 }
 
 SR_TEST(clip_is_idempotent) {

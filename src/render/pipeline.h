@@ -55,11 +55,6 @@ struct FragmentOutput {
 using VertexShaderFn = ClipVertex (*)(const VSIn&, const VertexUniforms&);
 using FragmentShaderFn = bool (*)(const FragmentInput&, const FragmentUniforms&, FragmentOutput&);
 
-enum class ShadingMode : uint8_t {
-    FlatColor,    // 忽略光照，直接 baseColor
-    VertexColor,  // 用 varying 里的顶点色（M3 起有内容）
-};
-
 struct CullState {
     bool backfaceCull = true;
     // top-down 屏幕空间里正面是 CW（NDC 的 CCW 经过 y 翻转）。见 Task 2.4 的测试。
@@ -73,9 +68,8 @@ struct PipelineState {
     VertexUniforms vu;
     FragmentUniforms fu;
     CullState cull;
-    bool depthTest = true;   // M2 恒通过（不判、不写），M3 填实现
+    bool depthTest = true;   // M3 起为真实现；与 depthWrite 互相独立
     bool depthWrite = true;
-    ShadingMode mode = ShadingMode::FlatColor;
     FrameStats* stats = nullptr;
 };
 

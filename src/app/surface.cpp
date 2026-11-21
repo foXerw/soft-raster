@@ -44,6 +44,17 @@ class WindowSurface final : public Surface {
             err = "createWindowSurface: " + err;
             return false;
         }
+        // 复审 C1：DIB 必须**选进** memory DC，否则 BitBlt 的源是 CreateCompatibleDC
+        // 自带的那张 1×1 默认位图 —— 渲染写进了 DIB 内存，屏幕上却什么也没有。
+        // 这个 bug 逃过了全部 178 个测试，因为离屏与 golden 走的是堆内存，根本不碰 DIB；
+        // 而 "BitBlt 返回成功" 也不是证据（blit 错位图照样成功）。
+        // 所以下面加一条自检：选完之后确认 DC 里当前位图就是这块 DIB。
+        m_window.selectIntoMemory(m_dib.bitmap());
+        if (GetCurrentObject(m_window.memoryDc(), OBJ_BITMAP) != m_dib.bitmap()) {
+            err = "createWindowSurface: DIB 没能选进 memory DC（BitBlt 会 blit 错位图）";
+            return false;
+        }
+
         m_width = width;
         m_height = height;
         m_depth.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 1.0f);
@@ -63,6 +74,11 @@ class WindowSurface final : public Surface {
     bool pumpInput(InputState& out) override { return m_window.pumpInput(out); }
     bool shouldClose() const override { return m_window.shouldClose(); }
     const char* kind() const override { return "window"; }
+
+  public:
+    // 成员按声明逆序析构：m_dib 会先于 m_window 死掉，而那时位图还选在 m_window 的
+    // memory DC 里 ⇒ DeleteObject 失败 ⇒ 泄漏（复审 I5）。所以显式先 deselect。
+    ~WindowSurface() override { m_window.deselectFromMemory(); }
 
   private:
     Window m_window;

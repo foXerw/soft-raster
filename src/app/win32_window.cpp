@@ -117,6 +117,13 @@ bool Window::blitMemoryToWindow(int width, int height, std::string& err) {
     return true;
 }
 
+void Window::deselectFromMemory() {
+    if (m_memDc != nullptr && m_selectedPrevious != nullptr) {
+        SelectObject(m_memDc, m_selectedPrevious);
+        m_selectedPrevious = nullptr;
+    }
+}
+
 void Window::requestRepaint() {
     if (m_hwnd != nullptr) InvalidateRect(m_hwnd, nullptr, FALSE);
 }

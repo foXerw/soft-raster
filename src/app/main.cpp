@@ -73,7 +73,6 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         st.target = &target;
         st.vertexShader = sr::transformVS;
         st.fragmentShader = sr::vertexColorFS;
-        st.mode = sr::ShadingMode::FlatColor;
         st.depthTest = true;
         st.depthWrite = true;
         st.cull.backfaceCull = !g_showBackfaces;
@@ -198,7 +197,9 @@ int runWindow(const app::AppOptions& o) {
     // --auto-close 是给冒烟测试用的：不开这个选项，"窗口能跑"就只能靠人盯着看，
     // 而 CI 化的验证需要的是"跑 N 帧、退出码 0、没有断言"。
     while (!surface->shouldClose()) {
-        surface->pumpInput(input);
+        if (!surface->pumpInput(input) || surface->shouldClose()) break;   // 复审 I3：
+        // WM_CLOSE 会同步 DestroyWindow，句柄当场失效；继续渲染并 present 就是在
+        // 已释放的 DC 上做 BitBlt（未定义行为 + 一句误导性的"上屏失败" + 退出码 1）。
 
         if (input.togglePause) paused = !paused;
         if (input.toggleWireframe) g_showBackfaces = !g_showBackfaces;   // 借 W 键做 M2 的穿帮演示

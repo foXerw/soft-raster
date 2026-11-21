@@ -14,9 +14,7 @@ ClipVertex transformVS(const VSIn& in, const VertexUniforms& u) {
 
     ClipVertex out;
     out.clip = clip;
-    // 关键的一步：交给裁剪阶段的是 v/w，不是 v。
-    const float invW = 1.0f / clip.w;
-    out.vOverW = v * invW;
+    out.v = v;   // 未除 w：裁剪对它线性（见 vertex.h）
     return out;
 }
 

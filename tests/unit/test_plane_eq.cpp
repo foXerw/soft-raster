@@ -66,10 +66,12 @@ SR_TEST(edge_function_is_exactly_zero_on_the_edge_line) {
 SR_TEST(edge_function_classifies_top_and_left_edges) {
     // 顶边：水平，且第三顶点在它**下方**（top-down 里 y 更大）。
     const EdgeFunc top = EdgeFunc::fromEdge(Vec2{0, 0}, Vec2{4, 0});
-    SR_ASSERT(top.edgeIsTopOrLeft(Vec2{2, 5}));
+    SR_ASSERT(top.edgeIsTopOrLeft());
     // 同一条边如果第三顶点在上方，就不是顶边。
-    SR_ASSERT_FALSE(top.edgeIsTopOrLeft(Vec2{2, -5}));
+        // 同一条边、反向遍历 ⇒ 内侧法线朝上 ⇒ 不再是顶边
+    const EdgeFunc topRev = EdgeFunc::fromEdge(Vec2{4, 0}, Vec2{0, 0});
+    SR_ASSERT_FALSE(topRev.edgeIsTopOrLeft());
     // 底边（水平但第三顶点在上方）不算 top。
     const EdgeFunc bottom = EdgeFunc::fromEdge(Vec2{4, 4}, Vec2{0, 4});
-    SR_ASSERT_FALSE(bottom.edgeIsTopOrLeft(Vec2{2, 0}));
+    SR_ASSERT_FALSE(bottom.edgeIsTopOrLeft());
 }

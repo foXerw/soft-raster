@@ -135,6 +135,46 @@ SR_TEST(reversed_winding_covers_exactly_the_same_pixels) {
             SR_ASSERT_EQ(c2.rt.color.readPacked(x, y), c3.rt.color.readPacked(x, y));
 }
 
+SR_TEST(steep_shared_edge_has_no_gap_and_no_overlap) {
+    // 复审 C3：共享一条**陡边**（这里从 (0,0) 到 (1,10)，|dx| < |dy|）的两个三角形。
+    // 旧规则 "opposite.x > p0.x || opposite.x > p1.x" 在这里让两边都声称拥有边界像素（双写），
+    // 换一组 opposite 位置则两边都不声称（缝隙）。±45° 的对角线测试看不见它，
+    // 因为那里 opposite.x 恰好等于边的最小 x。
+    // 新规则用内侧法线：左边 ⟺ n.x > 0，顶边 ⟺ n.x == 0 && n.y > 0。
+    const sr::Vec2 e0{0.5f, 0.5f}, e1{1.5f, 10.5f};
+    int doubleWrites = 0, gaps = 0;
+    // 遍历几种第三顶点组合：缝隙与双写都要为 0
+    const sr::Vec2 oppL[3] = {{0.7f, 5.5f}, {-0.5f, 5.5f}, {0.5f, 5.5f}};
+    const sr::Vec2 oppR[3] = {{2.5f, 5.5f}, {1.5f, 5.5f}, {3.5f, 6.5f}};
+    for (int k = 0; k < 3; ++k) {
+        Canvas c{8, 12};
+        sr::RasterStats sL, sR;
+        const FlatTriangle L{{e0, e1, oppL[k]}, sr::encodeSRGB({1, 0, 0})};
+        // 右三角形用反向的同一条边
+        const FlatTriangle R{{e1, e0, oppR[k]}, sr::encodeSRGB({0, 0, 1})};
+        sr::rasterizeFlatTriangle(c.rt.color, L, &sL);
+        sr::rasterizeFlatTriangle(c.rt.color, R, &sR);
+        // 落在共享边上的像素中心：x=1.5 那一列的 y=1..10 中，(1, y) 的中心是 (1.5, y+0.5)
+        for (int y = 1; y <= 9; ++y) {
+            const bool inL = c.rt.color.readPacked(1, y) == sr::encodeSRGB({1, 0, 0});
+            const bool inR = c.rt.color.readPacked(1, y) == sr::encodeSRGB({0, 0, 1});
+            // 后写的会覆盖前写的，所以用覆盖计数之和与"被写次数"来判定
+            if (inL && inR) ++doubleWrites;
+        }
+        // 独立地用覆盖数验证：两个三角形的覆盖数之和 减去 实际被写的像素数 = 重叠数
+        Canvas c2{8, 12};
+        sr::RasterStats a;
+        sr::rasterizeFlatTriangle(c2.rt.color, L, &a);
+        int written = 0;
+        for (int y = 0; y < 12; ++y)
+            for (int x = 0; x < 8; ++x)
+                if (c2.rt.color.readPacked(x, y) != kClear) ++written;
+        if (written != a.pixelsCovered) ++gaps;   // 有覆盖却没落笔 ⇒ 越界或丢像素
+    }
+    SR_ASSERT_EQ(doubleWrites, 0);
+    SR_ASSERT_EQ(gaps, 0);
+}
+
 SR_TEST(degenerate_triangle_writes_nothing) {
     Canvas c{16, 16};
     sr::RasterStats s;
@@ -146,7 +186,7 @@ SR_TEST(degenerate_triangle_writes_nothing) {
     SR_ASSERT_EQ(countPixelsOf(c.rt.color, sr::encodeSRGB({1, 1, 1})), 0);
 
     // 重合顶点同样要拒
-    const FlatTriangle dup{{sr::Vec2{3, 3}, sr::Vec2{3, 3}, sr::Vec2{7, 7}}, sr::encodeSRGB({1, 1, 1})};
+        const FlatTriangle dup{{sr::Vec2{3, 3}, sr::Vec2{3, 3}, sr::Vec2{7, 7}}, sr::encodeSRGB({1, 1, 1})};
     sr::RasterStats s2;
     sr::rasterizeFlatTriangle(c.rt.color, dup, &s2);
     SR_ASSERT_EQ(s2.trianglesRejected, 1);
@@ -216,7 +256,7 @@ SR_TEST(raster_stats_accumulate_across_calls) {
     const FlatTriangle t1{{sr::Vec2{1, 1}, sr::Vec2{5, 1}, sr::Vec2{1, 5}}, sr::encodeSRGB({1, 0, 0})};
     const FlatTriangle t2{{sr::Vec2{9, 9}, sr::Vec2{13, 9}, sr::Vec2{9, 13}}, sr::encodeSRGB({0, 1, 0})};
     sr::rasterizeFlatTriangle(c.rt.color, t1, &s);
-    const int afterFirst = s.pixelsWritten;
+    const long long afterFirst = s.pixelsWritten;
     sr::rasterizeFlatTriangle(c.rt.color, t2, &s);
     SR_ASSERT(s.pixelsWritten > afterFirst);
     SR_ASSERT_EQ(s.trianglesRejected, 0);

@@ -33,6 +33,13 @@ struct DepthTarget {
     float* values = nullptr;
     int width = 0;
     int height = 0;
+    // 行跨度（元素个数），**必须与 width 分开**：子矩形 view 的行跨度是父缓冲的宽度。
+    // 复审 I1：原先用 width 当跨度，于是 view 里 y>0 的读写落到错误的父像素上，
+    // 而 M8 的"tile 不重叠所以无锁"前提正是建立在子矩形寻址正确之上。
+    int stride = 0;
+
+    DepthTarget() = default;
+    DepthTarget(float* v, int w, int h) : values(v), width(w), height(h), stride(w) {}
 
     void clear(float v = 1.0f);  // 约定：默认最远 = 1.0（非 reverse-Z，§7.1）
     void write(int x, int y, float d);

@@ -10,13 +10,10 @@
 namespace {
 
 sr::ClipVertex clipAt(const sr::Vec4& clip, const sr::Varyings& v) {
+    // ClipVertex 存未除 w 的属性（复审 C2 的纠正），所以这里不再做除法。
     sr::ClipVertex cv;
     cv.clip = clip;
-    const float invW = 1.0f / clip.w;
-    cv.vOverW.color = v.color * invW;
-    cv.vOverW.worldNormal = v.worldNormal * invW;
-    cv.vOverW.uv = v.uv * invW;
-    cv.vOverW.worldPos = v.worldPos * invW;
+    cv.v = v;
     return cv;
 }
 
@@ -63,16 +60,17 @@ SR_TEST(viewport_divides_by_w_before_mapping) {
     SR_ASSERT_NEAR(a.invW, 0.5f, 1e-6f);
 }
 
-SR_TEST(viewport_restores_varyings_from_their_divided_form) {
+SR_TEST(viewport_keeps_varyings_undivided_and_exposes_inv_w) {
     const sr::Viewport vp{0, 0, 100, 100};
     sr::Varyings v;
     v.color = sr::Vec4{0.25f, 0.5f, 0.75f, 1.0f};
     v.uv = sr::Vec2{0.1f, 0.9f};
     const sr::ScreenVertex s = vp.project(clipAt(sr::Vec4{0, 0, 0, 4}, v));
+    // 属性保持未除的形式（Setup 才乘 invW 建 attr/w 的面），invW 单独暴露出来。
     SR_ASSERT_NEAR(s.v.color.x, 0.25f, 1e-6f);
     SR_ASSERT_NEAR(s.v.color.z, 0.75f, 1e-6f);
     SR_ASSERT_NEAR(s.v.uv.x, 0.1f, 1e-6f);
-    SR_ASSERT_NEAR(s.v.uv.y, 0.9f, 1e-6f);
+    SR_ASSERT_NEAR(s.invW, 0.25f, 1e-6f);
 }
 
 SR_TEST(varyings_are_laid_out_as_twelve_floats) {

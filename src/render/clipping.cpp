@@ -9,12 +9,12 @@ constexpr int kMaxPolygonVerts = kMaxClippedVerts;   // 9：见头文件里的�
 
 ClipVertex lerpClipVertex(const ClipVertex& a, const ClipVertex& b, float t) {
     ClipVertex r;
-    // clip 与 vOverW 用**同一个** t —— 透视正确性就靠这一行（见 vertex.h 的推导注释）。
+    // clip 与 v 用**同一个** t：沿 clip 边两者都线性（推导见 vertex.h）。
     r.clip = lerp(a.clip, b.clip, t);
-    r.vOverW.color = lerp(a.vOverW.color, b.vOverW.color, t);
-    r.vOverW.worldNormal = lerp(a.vOverW.worldNormal, b.vOverW.worldNormal, t);
-    r.vOverW.uv = lerp(a.vOverW.uv, b.vOverW.uv, t);
-    r.vOverW.worldPos = lerp(a.vOverW.worldPos, b.vOverW.worldPos, t);
+    r.v.color = lerp(a.v.color, b.v.color, t);
+    r.v.worldNormal = lerp(a.v.worldNormal, b.v.worldNormal, t);
+    r.v.uv = lerp(a.v.uv, b.v.uv, t);
+    r.v.worldPos = lerp(a.v.worldPos, b.v.worldPos, t);
     return r;
 }
 
