@@ -19,6 +19,7 @@ CMakeFiles/
 /*.bmp
 /shot*.bmp
 /*.ppm
+/*.png
 /tmp/
 /sr_tmp_bmp/
 
