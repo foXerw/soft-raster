@@ -98,7 +98,7 @@ ctest --test-dir build-gcc --output-on-failure
 spec 隐含、但单个任务的测试不天然覆盖、且最容易咬人的 5 类。每行后面"钉在"= 把该断言加进哪个任务的测试里。
 
 1. **y 方向与绕向耦合**：core 输出 top-down（C8）会把屏幕空间的三角形绕向翻转。如果背面剔除按 NDC 的 CCW=正面来判，翻 y 之后所有立方体的面会被错误剔除，症状是"半个立方体消失、转起来面在闪"。**钉在 2.4**（给定 top-down 屏幕坐标下 CW/CCW 两个三角形，断言被剔除的恰好是设计文档定义的那一侧）与 **2.5**（立方体六面全部可见且深度不冲突）。
-2. **透视除法后的线性量存成了什么**：裁剪阶段必须对 `clip` 与 `varying/w`、`1/w` 做**同一组线性插值**，如果对未除 w 的 varying 插值，症状是纹理/颜色在四边形上被"拉回"到三角形中心，且随视角变化。**钉在 3.1**（用一个深度差很大的四边形，pin 两个已知像素的插值结果，与手工透视正确值比对）。
+2. **透视除法后的线性量存成了什么**（复审 C2 改正，原文写反了）：裁剪阶段必须对 `clip` 与**未除 w 的 attr** 用同一组线性插值。clip 空间里线性的是 attr 与 w 各自，`attr/w` 是"线性比线性"，对它插值是错的：A(w=1,u=0)、B(w=2,u=3) 的中点正确值 1.0，插值 attr/w 给 0.75。`attr/w` 与 `1/w` 线性这件事**只在屏幕空间成立**（那才是 M3 平面方程插值的依据）。原文把两个空间混为一谈，实现照它写，症状是贴近或穿进模型时颜色与 UV 在裁剪边界上扭曲。
 3. **零面积 / 退化 / `w<=0` 的后半空间三角形**：裁剪输出可能含重复顶点或共线三角形；`planeInvW.sample()` 在极端情形可趋零；不拒绝就会写 NaN 深度或除零，症状是黑斑随镜头移动。**钉在 2.2**（裁剪后顶点数与重合顶点）与 **2.4**（`|area2| < eps` 与非有限值必须整体丢弃并计入 `trianglesDegenerate`）。
 4. **两后端的边界像素归属**：M8/M9 的硬约束是"正确性不因优化而改变"（spec §7.8）。若 Backend A 用 `< 0` 判边、Backend B 的 SIMD 掩码用 `>= 0`，相邻三角形之间会出现缝隙或双线 overdraw，症状是网格状暗线。**钉在 1.4**（一个正方形沿对角线劈成两个三角形，断言覆盖像素数恰好 = 像素网格面积，且**没有任何像素被写两次**——这条不需要手算 mask 就能把 fill rule 唯一化）；M8 再加 A/B 一致性。
 5. **线性空间 ↔ sRGB 的两处翻转点**：光照必须在线性空间算、写颜色前编码。搞反的两种症状：画面整体发灰（未编码）或暗部死黑（重复编码）。另外 BMP 写盘和 DIB 显示各有一次行翻转，两次叠加会让 golden 与窗口上下颠倒。**钉在 0.3**（`linearToSrgb8(srgb8ToLinear(v)) == v`，且 `linearToSrgb8(0.5)` ∈ [186,188]）与 **0.5**（BMP 第一行数据对应图像**最下**行）。
@@ -807,7 +807,7 @@ bool setupTriangle(const ScreenVertex in[3], const Viewport&, const PipelineStat
   1. 屏幕 top-down 空间中 `p0={0,0}, p1={10,0}, p2={0,10}`（视觉上顺时针）→ `area2 < 0`，且 `FrontFace::CW` 时 `backFacing == false`。
   2. 同一三角形顶点顺序换成 `p0,p2,p1` → `area2 > 0` → `backFacing == true`，`backfaceCull==true` 时 `rejected && rejectReason == backface`，**且不写入任何像素**。
   3. **凸体面数不变式**：`makeCube(2, perFaceNormals=true)`（24 顶点 / 12 三角形），相机 `{0,0,5}` 看原点，model 旋转 `(25°, 35°, 0)` 的一般姿态 → `trianglesBackfaceCulled == 6`、`trianglesRasterized == 6`（恰好一半）；把 `FrontFace` 从 `CW` 换成 `CCW`，被剔的必须换成**另外那 6 个**（断言：两次通过的三角形索引集合互不相交且并集为全部 12 个）——这是比"数量相等"强得多的判据，能把绕向错误和"剔错了面"区分开。
-  4. **正对姿态的退化面**：同一相机下 `model = identity` → 4 个侧面投影成零面积线段，断言 `trianglesDegenerate == 8`、`trianglesBackfaceCulled == 2`、`trianglesRasterized == 2`。**判定顺序在此定死**：先测零面积再测朝向（面积≈0 时朝向无意义，若先判朝向会得到随 `eps` 抖动的结果）。这条同时是"退化三角形不进入光栅"的前置保证（Review Focus 3）。
+  4. **正对姿态**（复审改正）：`model = identity` 时 4 个侧面**不是棱对而是背对**（外法线与视线垂直只在正交投影下成立；透视下 dot = -1），所以断言是 `trianglesRasterized == 2`、`trianglesBackfaceCulled == 10`、`trianglesDegenerate == 0`。
 - 零面积（共线）→ `rejected && rejectReason == degenerate`。
 - 含 `NaN`/`inf` 的输入 → `rejected && rejectReason == nonfinite`（Review Focus 3），且**不写入任何像素**（用一个被污染的目标断言每个字节未变）。
 - bbox 被 `ColorTarget` 边界夹住：一个跨出目标右侧的大三角形，`extent` 不超过 `width-1`，且 `pixelsWritten` 只落在合法范围。
