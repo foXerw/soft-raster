@@ -88,6 +88,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_depth.cpp
     tests/unit/test_vertex_color.cpp
     tests/unit/test_sink.cpp
+    tests/unit/test_camera.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp

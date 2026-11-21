@@ -1,6 +1,7 @@
 #include "app/cmdline.h"
 
 #include <charconv>
+#include <cstdlib>   // strtof
 #include <string>
 #include <vector>
 
@@ -39,6 +40,18 @@ struct Parser {
     // 两个入口都先 ++index 跳过 flag 本身，再取下一个参数当值。
     // （第一版忘了这一步，症状是 `--width 640` 报"需要一个整数，收到 '--width'"，
     //  而 `--obj foo.obj` 静默把 obj 设成了 "--obj" —— 后者更危险，因为它不报错。）
+    bool nextFloat(const char* flag, float& dst) {
+        ++index;
+        if (index >= argc) return fail(std::string(flag) + " 缺少值");
+        char* end = nullptr;
+        const float v = std::strtof(argv[index], &end);
+        if (end == argv[index] || *end != 0) {
+            return fail(std::string(flag) + " 需要一个数，收到 '" + argv[index] + "'");
+        }
+        dst = v;
+        return true;
+    }
+
     bool nextInt(const char* flag, int& dst) {
         ++index;
         if (index >= argc) return fail(std::string(flag) + " 缺少值");
@@ -119,6 +132,17 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             if (!p.nextInt("--frames", v)) return false;
             if (v < 1) return p.fail("--frames 必须 >= 1，收到 " + std::to_string(v));
             out.frames = v;
+            continue;
+        }
+        if (a == "--yaw" || a == "--pitch" || a == "--distance") {
+            float v = 0.0f;
+            if (!p.nextFloat(a.c_str(), v)) return false;
+            if (a == "--yaw") out.yaw = v;
+            else if (a == "--pitch") out.pitch = v;
+            else {
+                if (!(v > 0.0f)) return p.fail("--distance 必须为正，收到 " + std::to_string(v));
+                out.distance = v;
+            }
             continue;
         }
         if (a == "--auto-close") {

@@ -31,6 +31,7 @@
 #include "render/overlay_font.h"
 #include "render/patterns.h"
 #include "scene/golden_scene.h"
+#include "scene/camera.h"
 #include "scene/mesh.h"
 #include "render/raster_scalar.h"
 #include "render/render_target.h"
@@ -52,7 +53,8 @@ constexpr float kBottom = 0.85f;
 bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
 sr::DebugViewSink g_sink;       // 'V' 循环：color → depth → gray
 
-void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine) {
+void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
+                 const sr::OrbitCamera& camera) {
     target.depth.clear();
     const sr::LinearColor a{kTop, kTop * 0.55f, kBottom * 0.35f};
     const sr::LinearColor b{kBottom, kBottom * 0.7f, kTop * 0.4f};
@@ -78,15 +80,15 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         st.cull.backfaceCull = !g_showBackfaces;
         
 
-        st.vu.model = sr::Mat4::rotationX(0.43f) * sr::Mat4::rotationY(phase);
-        st.vu.view = sr::makeLookAt({0, 0, 5}, {0, 0, 0}, {0, 1, 0});
+        // 物体不再自转：旋转交给轨道相机，鼠标拖拽直接改变 yaw/pitch。
+        // "转相机"与"转物体"在画面上等价，但只有前者能让用户觉得自己抓住了物体。
+        st.vu.model = sr::Mat4::identity();
+        st.vu.view = camera.view();
         st.vu.proj = sr::makePerspective(60.0f * 3.14159265f / 180.0f,
                                          static_cast<float>(target.color.width) /
                                              static_cast<float>(target.color.height),
                                          0.1f, 100.0f);
-        sr::Mat4 inv;
-        st.vu.normalMatrix = sr::Mat4::tryInvert(st.vu.model, inv) ? inv.transposed().upper3x3AsMat4()
-                                                                   : sr::Mat4::identity();
+        st.vu.normalMatrix = sr::Mat4::identity();   // model 是单位阵，法线矩阵也就是单位阵
         backend.draw(cube, st);
     }
 
@@ -138,7 +140,11 @@ int runOffscreen(const app::AppOptions& o) {
         const std::string status = "OFFSCREEN FRAME " + std::to_string(i + 1) + "/" +
                                    std::to_string(o.frames) + "  " + std::to_string(o.width) + "X" +
                                    std::to_string(o.height);
-        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status);
+        sr::OrbitCamera camera;
+        camera.yaw = o.yaw;
+        camera.pitch = o.pitch;
+        camera.distance = o.distance;
+        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, camera);
         frameMs.push_back(frameTimer.elapsedMs());
     }
     const double ms = total.elapsedMs();
@@ -189,6 +195,10 @@ int runWindow(const app::AppOptions& o) {
 
     bool paused = false;
     float phase = 0.0f;
+    sr::OrbitCamera camera;
+    camera.yaw = o.yaw;
+    camera.pitch = o.pitch;
+    camera.distance = o.distance;
     double lastMs = 0.0;
     double fpsPrintAccum = 0.0;
     int screenshotCounter = 0;
@@ -221,12 +231,20 @@ int runWindow(const app::AppOptions& o) {
 
         const bool shouldRender = !paused || input.stepFrame;
         if (shouldRender) {
+            // 鼠标：左键拖拽 = 轨道旋转，滚轮 = 推拉。暂停时不响应，
+            // 这样"冻结当前帧再看细节"才成立（设计文档 C7）。
+            if (input.leftPressed) camera.orbit(input.dx, input.dy);
+            if (input.wheel != 0.0f) camera.dolly(input.wheel);
+
             sr::Timer frameTimer;
             const double fpsNow = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "FPS %.1f  %.2f MS  %dx%d%s", fpsNow, lastMs, o.width,
-                          o.height, paused ? "  PAUSED" : "");
-            renderFrame(target, phase, buf);
+            (void)camera;
+            char buf[160];
+            std::snprintf(buf, sizeof(buf), "FPS %.1f  %.2f MS  %dx%d  YAW %.2f PITCH %.2f DIST %.1f%s",
+                          fpsNow, lastMs, o.width, o.height, static_cast<double>(camera.yaw),
+                          static_cast<double>(camera.pitch), static_cast<double>(camera.distance),
+                          paused ? "  PAUSED" : "");
+            renderFrame(target, phase, buf, camera);
             // 与帧时间相关：掉帧时动画速度不变（float 累加，所以乘的是 float）。
             phase += static_cast<float>(0.35 * lastMs * 0.001);
             lastMs = frameTimer.elapsedMs();

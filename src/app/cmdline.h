@@ -17,6 +17,9 @@ struct AppOptions {
     int bench = 0;        // >0 = 跑 N 帧并打印分阶段耗时（隐含 offscreen）
     int autoClose = 0;    // >0 = 窗口模式渲染这么多帧后自动关闭（冒烟测试用，见 M0 notes）
     bool offscreen = false;
+    float yaw = 0.0f;
+    float pitch = 0.35f;
+    float distance = 5.0f;   // 轨道相机的初值（离屏渲染要确定性，所以必须能从命令行给）
     bool noFit = false;
     std::string goldenWrite;   // 非空 = 渲染 golden 场景并写到这个路径
     bool help = false;
