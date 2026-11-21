@@ -74,10 +74,6 @@ SR_TEST(rotated_cube_submits_culls_and_rasterizes_the_expected_counts) {
     SR_ASSERT_EQ(stats.trianglesBackfaceCulled, 6);
     SR_ASSERT_EQ(stats.trianglesRasterized, 6);
     SR_ASSERT_EQ(stats.trianglesDegenerate, 0);
-    std::printf("[debug] covered=%lld written=%lld offscreen=%lld\n",
-                static_cast<long long>(stats.fragmentsCovered),
-                static_cast<long long>(stats.fragmentsWritten),
-                static_cast<long long>(stats.trianglesOffscreen));
     SR_ASSERT(stats.fragmentsWritten > 0);
 
     // 换个姿态重跑，三个数不变（凸体不变式）
