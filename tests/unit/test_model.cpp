@@ -167,6 +167,12 @@ SR_TEST(model_mtl_present_but_malformed_is_an_error) {
     const bool ok = sr::loadModel(dir.p / "a.obj", m, err);
     SR_ASSERT_FALSE(ok);
     SR_ASSERT_FALSE(err.empty());
+    // P22（M5.4 欠的一行）：错误必须**点名肇事 MTL**，与 missing.tga 用例同形。
+    // 只断言非空的话，"err 只写解析错误不带文件名"的变异照样绿 —— 用户拿到一条
+    // 不知道是哪个文件的错误，等于没有错误。
+    if (err.find("m.mtl") == std::string::npos)
+        std::printf("[model] 坏 MTL 的 err 是：%s\n", err.c_str());
+    SR_ASSERT(err.find("m.mtl") != std::string::npos);
     SR_ASSERT(m.textures.empty());   // 失败不留半成品
 }
 
