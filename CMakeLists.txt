@@ -130,9 +130,12 @@ if(SR_BUILD_TESTS)
     tests/unit/test_mtl.cpp
     tests/unit/test_obj.cpp
     tests/unit/test_model.cpp
+    tests/unit/test_scene.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
+    # M5.6：scene.cpp 不含 Win32（cmdline.cpp 先例），load/refit 的行为直接单测。
+    src/app/scene.cpp
   )
   target_link_libraries(soft_raster_tests PRIVATE soft_raster_core soft_raster_loader)
   target_include_directories(soft_raster_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
