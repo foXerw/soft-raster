@@ -37,15 +37,19 @@ bool startsWithDigit(std::string_view tok) {
     return !tok.empty() && tok[0] >= '0' && tok[0] <= '9';
 }
 
-// D17 的 arity 表：**只决定"少吞还是多吞"，不是白名单**。未知选项返回 -1，
-// 走"丢自己 + 吞紧随的数字 token + 警告"那一支，而不是把整行报错。
+// D17 的 arity 表（M5.1 评审修订）：**只决定"少吞还是多吞"，不是白名单**。未知选项返回 -1，
+// 走"丢自己 + 吞紧随的整串数字 token + 警告"那一支，而不是把整行报错。
+// 只保留高置信度条目：原表凭印象写的 -mm=3 / -cc / -imf 都与真实 MTL 规范不符。错条目的代价
+// 不是少吞而是**多吞** —— -mm 0 1 brick.png 会把 brick.png 当第三个参数吃掉 ⇒ 剩空串 ⇒
+// 误判"缺文件名" ⇒ 整个文件加载失败（正是 G-M5.1 要防的那类事）。
+// **表不能删干净**：-imfchan(r/g/b/a/l/z) 与 -clamp(on/off) 的参数**不是数字**，未知分支的
+// 数字串规则接不住它们，所以这两条必须靠表。其余 -cc -fov -imf -pr -sa -tile_res -blend
+// -boost -bobst -bump 一律删掉，交给未知路径（修订后的兜底能正确吞掉它们的数字参数）。
 int optionArity(std::string_view opt) {
-    if (opt == "-s" || opt == "-o" || opt == "-bf" || opt == "-cc" || opt == "-t" ||
-        opt == "-mm")
-        return 3;
-    if (opt == "-bm" || opt == "-blend" || opt == "-bobst" || opt == "-boost" ||
-        opt == "-bump" || opt == "-texres" || opt == "-cl" || opt == "-clamp" ||
-        opt == "-fov" || opt == "-imf" || opt == "-pr" || opt == "-sa" || opt == "-tile_res")
+    if (opt == "-s" || opt == "-o" || opt == "-t") return 3;
+    if (opt == "-bf" || opt == "-mm") return 2;
+    if (opt == "-bm" || opt == "-texres" || opt == "-imfchan" || opt == "-clamp" ||
+        opt == "-cl")
         return 1;
     return -1;
 }
@@ -170,7 +174,12 @@ bool parseMtl(std::string_view text, std::vector<Material>& out,
                     }
                 } else {
                     warnings.push_back(lineTag(lineNo) + "map_Kd 未知选项 '" + std::string(opt) + "'");
-                    if (i < tokens.size() && startsWithDigit(tokens[i])) {
+                    // 兜底必须比被兜底的表更稳：吞掉紧随其后的**整串**数字 token（一串，不是一个），
+                    // 一直吃到第一个不以数字开头的 token。否则 -weird 1 2 3 file.png 会剩下
+                    // "2 3 file.png" —— 一条静默给出错文件名的路径。判据用 startsWithDigit（首字符是
+                    // 数字），不是"可解析为有限数"：已知限制（D17 修订，有意为之）是以数字开头的文件名
+                    // （4k.png）也会被吞 ⇒ 报缺文件名，真实导出器不产生这种名字，支持它得违反 D2 做 IO。
+                    while (i < tokens.size() && startsWithDigit(tokens[i])) {
                         ++i;
                         ++stats.optionTokensSkipped;
                     }

@@ -142,6 +142,64 @@ SR_TEST(mtl_map_kd_keeps_spaces_in_filename) {
     SR_ASSERT(r.out[0].diffuseMap == "my brick.png");
 }
 
+SR_TEST(mtl_map_kd_mm_takes_two_args) {
+    // -mm 是 2 个参数（multiplier add），不是 3。原表写成 3 会把 brick.png 当第三个参数
+    // 吃掉 ⇒ 剩空串 ⇒ 误判"缺文件名" ⇒ 整个文件加载失败（D17 修订，G-M5.1 要防的那类事）。
+    const ParseResult r = parse(
+        "newmtl m\n"
+        "map_Kd -mm 0 1 brick.png\n");
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.size(), 1);
+    // 失败时 parseMtl 会把 out 清空，先判空再取 [0]，免得 RED 状态下越界读成 UB。
+    if (!r.out.empty()) SR_ASSERT(r.out[0].diffuseMap == "brick.png");
+}
+
+SR_TEST(mtl_map_kd_unknown_option_swallows_whole_number_run) {
+    // Finding 1：未知选项后的**整串**数字都要吞掉，不是一个。-weird 1 2 3 file.png ⇒ file.png，
+    // 而不是静默剩下 "2 3 file.png"。兜底必须比被兜底的 arity 表更稳。
+    const ParseResult r = parse(
+        "newmtl m\n"
+        "map_Kd -weird 1 2 3 file.png\n");
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.size(), 1);
+    if (!r.out.empty()) SR_ASSERT(r.out[0].diffuseMap == "file.png");
+    SR_ASSERT(!r.warnings.empty());
+}
+
+SR_TEST(mtl_map_kd_imfchan_non_numeric_arg_needs_table) {
+    // -imfchan 的参数是通道字母（l），**不是数字**：未知分支的数字串规则接不住它，
+    // 必须靠表（arity 1）吞掉，否则文件名会变成 "l brick.png"。这就是表不能删干净的理由。
+    const ParseResult r = parse(
+        "newmtl m\n"
+        "map_Kd -imfchan l brick.png\n");
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.size(), 1);
+    if (!r.out.empty()) SR_ASSERT(r.out[0].diffuseMap == "brick.png");
+}
+
+SR_TEST(mtl_map_kd_clamp_on_non_numeric_arg) {
+    // -clamp on：参数 on 非数字，同样必须靠表（arity 1）吞掉，剩下 brick.png。
+    const ParseResult r = parse(
+        "newmtl m\n"
+        "map_Kd -clamp on brick.png\n");
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.size(), 1);
+    if (!r.out.empty()) SR_ASSERT(r.out[0].diffuseMap == "brick.png");
+}
+
+SR_TEST(mtl_map_kd_digit_leading_filename_is_known_limitation) {
+    // 已知限制（D17 修订，**有意为之，不是 bug**）：以数字开头的文件名会被未知选项的数字串
+    // 规则误吞。-weird 4k.png 里 4k.png 首字符是 '4' ⇒ 被吞 ⇒ 缺文件名 ⇒ 报错。真实导出器不产生
+    // 这种名字；要支持它得让 parseMtl 问文件系统（违反 D2"解析不做 IO"），不值。这条钉住当前
+    // 行为：将来谁改坏了这里会红，而不是安静地变成"文件名莫名其妙对不上"。
+    const ParseResult r = parse(
+        "newmtl m\n"
+        "map_Kd -weird 4k.png\n");
+    SR_ASSERT_FALSE(r.ok);
+    SR_ASSERT(r.out.empty());
+    SR_ASSERT(r.err.find("文件名") != std::string::npos);
+}
+
 SR_TEST(mtl_map_kd_without_filename_is_error) {
     // 光杆 map_Kd：D6 坏参数 ⇒ false + out 清空 + err 带行号。
     const ParseResult bare = parse(
