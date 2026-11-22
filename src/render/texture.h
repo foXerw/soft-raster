@@ -14,6 +14,12 @@ struct ImageRGBA8 {
     std::vector<uint8_t> rgba;   // 行主序，4 字节/像素，top-down
 };
 
+// 纹理单边上限（D13）。加载器必须在**分配之前**拿文件头问一次尺寸：
+// image_stb 用头探测（只读头部、不解码），TGA 侧对应 tgaPayloadFits 的长度下界。
+// 一个几十字节的头不该换走一次巨额分配 —— 8192x8192x4 = 256 MiB，而 M5 要载入
+// 用户从网上下载的图片。错误消息里必须带上这个值，用户才知道该把图缩到多大。
+inline constexpr int kMaxTextureSide = 4096;
+
 // 纹理：mipmap 链 + 采样参数。级别 0 是原图。
 struct Texture {
     int width = 0;

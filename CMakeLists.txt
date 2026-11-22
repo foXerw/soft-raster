@@ -25,6 +25,7 @@ add_library(soft_raster_core STATIC
   src/render/render_target.cpp
   src/render/patterns.cpp
   src/loader/bmp_writer.cpp
+  src/loader/tga_writer.cpp
   src/loader/mtl.cpp
   src/loader/obj.cpp
   src/render/overlay_font.cpp
@@ -123,6 +124,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_golden_scene_textured.cpp
     tests/unit/test_image_stb.cpp
     tests/unit/test_image_tga.cpp
+    tests/unit/test_tga_writer.cpp
     tests/unit/test_mtl.cpp
     tests/unit/test_obj.cpp
     tests/golden/golden.cpp

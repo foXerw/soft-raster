@@ -116,6 +116,12 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             out.offscreen = true;
             continue;
         }
+        // M5 的 checker.tga 资产入口（Ruling 38：独立 flag、不带默认值）。
+        // 它不渲染，所以**不**隐含 --offscreen —— main 里写完即返回。
+        if (a == "--emit-checker-tga") {
+            if (!p.nextString("--emit-checker-tga", out.emitCheckerTga)) return false;
+            continue;
+        }
         if (a == "--out") {
             if (!p.nextString("--out", out.out)) return false;
             continue;
@@ -192,6 +198,14 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
                       "（一次只刷一张参考图；两张都要就分两次跑）");
     }
 
+    // 资产入口与两个 golden 入口互斥，理由与上面那条相同：main 里 emit-checker-tga
+    // 分支先返回，同时给 golden 入口会被静默忽略 ——"我以为参考图也刷新了"没有别的信号。
+    if (!out.emitCheckerTga.empty() &&
+        (!out.goldenWrite.empty() || !out.goldenWriteTextured.empty())) {
+        return p.fail("--emit-checker-tga 与 --golden-write/--golden-write-textured 不能同时给"
+                      "（一次只做一件事；都要就分两次跑）");
+    }
+
     // 离屏模式没给 --out 时给一个默认名：这样 `--bench 60` 这类纯测量的调用
     // 不会因为没有输出文件而报错，也不会有人误以为"没写 --out 就会弹窗"。
     if (out.offscreen && out.out.empty()) out.out = "out.bmp";
@@ -223,6 +237,10 @@ std::string usageString() {
            "                     渲染 M4 golden 场景（贴图立方体 + 三线性）并写出。\n"
            "                     与上面那个是**两个入口**而不是一个带默认值的场景选择：\n"
            "                     后者会把 M4 的图画进 M3 的路径，而症状是\"重新生成后一切正常\"\n"
+           "  --emit-checker-tga <path.tga>\n"
+           "                     把程序生成的 checker（makeCheckerImage，128x128）写成\n"
+           "                     未压缩 32bpp TGA（bottom-up）。不渲染；assets/tga/checker.tga\n"
+           "                     的 provenance 入口（M5 锚 2）\n"
            "  --help, -h         显示本帮助\n";
 }
 

@@ -255,3 +255,45 @@ SR_TEST(cmdline_rejects_golden_write_textured_without_a_path) {
     SR_ASSERT_FALSE(ok);
     SR_ASSERT(err.find("--golden-write-textured") != std::string::npos);
 }
+
+SR_TEST(cmdline_emit_checker_tga_is_a_separate_entry) {
+    // Ruling 38 的第三个实例：资产生成入口不带默认值、不越界填别的字段。
+    // 它不渲染（只写 makeCheckerImage 的字节），所以也不该顺手打开 offscreen。
+    Args a{{"--emit-checker-tga", "assets/tga/checker.tga"}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT(o.emitCheckerTga == "assets/tga/checker.tga");
+    SR_ASSERT(o.goldenWrite.empty());           // 没有被顺手填上
+    SR_ASSERT(o.goldenWriteTextured.empty());
+    SR_ASSERT(o.obj.empty());
+    SR_ASSERT_FALSE(o.offscreen);               // 不渲染，无需离屏
+}
+
+SR_TEST(cmdline_emit_checker_tga_requires_a_value) {
+    Args a{{"--emit-checker-tga"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("--emit-checker-tga") != std::string::npos);
+    SR_ASSERT(err.find("缺少值") != std::string::npos);
+}
+
+SR_TEST(cmdline_rejects_emit_checker_tga_together_with_golden_entries) {
+    // 与 cmdline_rejects_two_golden_entries_together 同一条理由：main 里
+    // emit-checker-tga 分支先返回，同时给 golden 入口会被**静默忽略** ——
+    // "我以为参考图也刷新了"正是 Ruling 38 要消灭的那类假通过。
+    Args a{{"--emit-checker-tga", "a.tga", "--golden-write-textured", "b.bmp"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
+    Args b{{"--golden-write", "a.bmp", "--emit-checker-tga", "b.tga"}};
+    parse(b, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
+}

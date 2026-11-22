@@ -23,6 +23,7 @@
 #include "app/surface.h"
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
+#include "loader/tga_writer.h"
 #include "math/transform.h"
 #include "render/builtin_shaders.h"
 #include "render/color.h"
@@ -383,6 +384,21 @@ int main(int argc, char** argv) {
     }
     if (o.help) {
         std::printf("%s", app::usageString().c_str());
+        return 0;
+    }
+    // 资产生成入口（M5 锚 2 的 provenance）：不渲染、不建 surface，写完即返回。
+    // 与 golden 入口互斥已在 parseCmdline 里拒绝，这里不会静默忽略谁。
+    if (!o.emitCheckerTga.empty()) {
+        const sr::ImageRGBA8 checker =
+            sr::makeCheckerImage(sr::kGoldenCheckerCells, sr::kGoldenCheckerCellPx, {});
+        std::string werr;
+        if (!sr::writeTga(o.emitCheckerTga, checker, werr)) {
+            std::printf("[checker-tga] 失败: %s\n", werr.c_str());
+            return 1;
+        }
+        std::printf("[checker-tga] %dx%d → %s 由 makeCheckerImage(%d,%d) + writeTga，%s\n",
+                    checker.width, checker.height, o.emitCheckerTga.c_str(),
+                    sr::kGoldenCheckerCells, sr::kGoldenCheckerCellPx, sr::buildInfoString());
         return 0;
     }
     if (!o.goldenWrite.empty()) {

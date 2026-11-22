@@ -1,4 +1,6 @@
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -207,4 +209,46 @@ SR_TEST(tga_grayscale_replicates_into_rgb) {
     SR_ASSERT_EQ(img.rgba[0], 40); SR_ASSERT_EQ(img.rgba[1], 40); SR_ASSERT_EQ(img.rgba[2], 40);
     SR_ASSERT_EQ(img.rgba[3], 255);
     SR_ASSERT_EQ(img.rgba[4], 200); SR_ASSERT_EQ(img.rgba[6], 200);
+}
+
+SR_TEST(tga_loads_from_a_chinese_named_directory) {
+#ifndef _MSC_VER
+    // C1′：与 stb_loads_a_png_from_a_chinese_named_directory 同一条理由 ——
+    // D12 的宽字符打开路径只在 MSVC 主路径存在（ifstream 的 fs::path 重载）。
+    std::printf("[skip] 中文路径用例只在 MSVC 判定（C1′）\n");
+    return;
+#else
+    // D12 的 TGA 侧：loadTgaFile 收 fs::path，MSVC 的 ifstream(path) 走宽字符打开。
+    // 夹具用本文件已有的 header()/appendPixel() 手工拼字节（不依赖 writeTga，
+    // 读侧测试不该把写侧当 oracle），经 ofstream(fs::path) 写进中文目录。
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(L"sr_tmp_bmp") / L"中文tga目录_m5";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        std::printf("[skip] 无法创建中文目录: %s\n", ec.message().c_str());
+        return;
+    }
+    std::vector<uint8_t> d = header(2, 2, 1, 32, 0);   // bottom-up，2x1
+    appendPixel(d, 10, 200, 30, 255);
+    appendPixel(d, 200, 10, 30, 128);
+    const fs::path p = dir / L"棋盘.tga";
+    {
+        std::ofstream f(p, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(d.data()), static_cast<std::streamsize>(d.size()));
+        SR_ASSERT(static_cast<bool>(f));
+    }
+    sr::ImageRGBA8 img;
+    std::string err;
+    const bool ok = sr::loadTgaFile(p, img, err);
+    SR_ASSERT(ok);
+    if (!ok) std::printf("[tga] 中文路径加载失败: %s\n", err.c_str());
+    if (ok && hasBytes(img, 2 * 4)) {
+        SR_ASSERT_EQ(img.rgba[0], 10);
+        SR_ASSERT_EQ(img.rgba[1], 200);
+        SR_ASSERT_EQ(img.rgba[4], 200);
+        SR_ASSERT_EQ(img.rgba[7], 128);   // alpha 原样
+    }
+    fs::remove_all(dir, ec);
+#endif
 }

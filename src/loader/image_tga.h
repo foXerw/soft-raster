@@ -12,6 +12,7 @@
 // 包括"文件被截断"这种用真文件很难稳定构造的输入。
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include "render/texture.h"   // ImageRGBA8
@@ -30,6 +31,8 @@ bool tgaPayloadFits(int w, int h, int bytesPP, bool rle, size_t available);
 bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& err);
 
 // 读文件再解析。文件打不开时 err 里带上路径。
-bool loadTgaFile(const std::string& path, ImageRGBA8& out, std::string& err);
+// path 用 std::filesystem::path（D12）：std::string 隐式转换，既有调用点源码兼容；
+// MSVC 的 ifstream 有 fs::path 重载（宽字符打开），中文目录名因此能读。
+bool loadTgaFile(const std::filesystem::path& path, ImageRGBA8& out, std::string& err);
 
 }  // namespace sr

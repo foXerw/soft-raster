@@ -19,6 +19,15 @@ std::string fail(const std::string& path, const std::string& why) {
     return (path.empty() ? std::string("tga: ") : path + ": tga: ") + why;
 }
 
+// 与 image_stb.cpp 的同名函数同一条理由：path.string() 在 MSVC 上对 ANSI 代码页
+// 表示不了的路径（英文 locale 机器上的中文目录）会抛 system_error，而加载器的契约
+// 是返回 false + err。展示用 UTF-8 字节，无损且不抛。两个模块各自持有这个 4 行
+// 函数而不是互相 include：stb 封装与手写 TGA 是两条独立的解码路径（C2 的分层）。
+std::string displayPath(const std::filesystem::path& p) {
+    const std::u8string u8 = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+}
+
 }  // namespace
 
 bool tgaPayloadFits(int w, int h, int bytesPP, bool rle, size_t available) {
@@ -180,26 +189,28 @@ bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& er
     return true;
 }
 
-bool loadTgaFile(const std::string& path, ImageRGBA8& out, std::string& err) {
+bool loadTgaFile(const std::filesystem::path& path, ImageRGBA8& out, std::string& err) {
     out = ImageRGBA8{};
+    const std::string display = displayPath(path);   // 错误消息用；UTF-8 仅做展示
+    // ifstream 的 fs::path 重载：MSVC 下走宽字符打开，中文目录名因此能读（D12）。
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
-        err = path + ": 打不开文件";
+        err = display + ": 打不开文件";
         return false;
     }
     const std::streamoff len = f.tellg();
     if (len <= 0) {
-        err = path + ": 文件为空";
+        err = display + ": 文件为空";
         return false;
     }
     std::vector<uint8_t> bytes(static_cast<size_t>(len));
     f.seekg(0, std::ios::beg);
     if (!f.read(reinterpret_cast<char*>(bytes.data()), len)) {
-        err = path + ": 读取失败";
+        err = display + ": 读取失败";
         return false;
     }
     if (!parseTga(bytes.data(), bytes.size(), out, err)) {
-        err = path + ": " + err;                       // 带上是哪个文件
+        err = display + ": " + err;                    // 带上是哪个文件
         out = ImageRGBA8{};
         return false;
     }

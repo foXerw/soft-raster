@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <utility>
@@ -113,4 +114,81 @@ SR_TEST(stb_loader_can_be_used_as_a_texture_source) {
         sr::sampleNearest(tex, sr::WrapMode::ClampEdge, sr::WrapMode::ClampEdge, 0.5f, 0.75f);
     SR_ASSERT_NEAR(down.r, 0.0f, 1e-6f);
     SR_ASSERT_NEAR(down.b, 1.0f, 1e-6f);
+}
+
+SR_TEST(stb_rejects_a_file_header_larger_than_the_texture_cap) {
+    // D13：18 字节的 TGA 头声称 8192x8192（= 256 MiB RGBA），**没有任何像素数据**。
+    // 拒绝必须发生在解码/分配之前（先问后分配，与 tgaPayloadFits 同一条纪律），
+    // 所以 err 要来自尺寸检查（含 kMaxTextureSide 的值 4096），而不是"无法解码"。
+    // 变异验证：删掉头探测检查 ⇒ 本条红，且那次是真的分配了 256 MiB（耗时可见差）。
+    const char* p = "sr_tmp_bmp/m5_stb_huge_header.tga";
+    {
+        uint8_t h[18] = {0};
+        h[2] = 2;                       // 未压缩 truecolor
+        h[12] = 0x00; h[13] = 0x20;     // 宽 8192（LE）
+        h[14] = 0x00; h[15] = 0x20;     // 高 8192（LE）
+        h[16] = 32;
+        std::ofstream f(p, std::ios::binary);
+        f.write(reinterpret_cast<const char*>(h), 18);
+    }
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT_FALSE(sr::loadImageFile(p, img, err));
+    if (err.find("4096") == std::string::npos) std::printf("[stb] 错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("4096") != std::string::npos);
+    SR_ASSERT(err.find("kMaxTextureSide") != std::string::npos);
+    SR_ASSERT_EQ(img.width, 0);         // 失败不留半张图
+    SR_ASSERT_EQ(static_cast<int>(img.rgba.size()), 0);
+}
+
+SR_TEST(stb_loads_a_png_from_a_chinese_named_directory) {
+#ifndef _MSC_VER
+    // C1′：本条只在 MSVC 主路径判定。g++/MSYS2 侧宽字符临时目录的行为不稳
+    // （任务书允许 g++ 侧少判这几条并要求说明）；MSVC 是产品方实际使用的路径。
+    std::printf("[skip] 中文路径用例只在 MSVC 判定（MSYS2 宽字符临时目录不稳，C1′）\n");
+    return;
+#else
+    // D12 / G-M5.5：中文目录名在 MSVC 的窄字符 fopen 下是 ANSI 误解码 ⇒ "打不开文件"。
+    // 用例名里的 png 是任务书钉死的名字；夹具实际是 BMP —— 本项目没有 PNG 编码器
+    // （设计 §3 非目标），而这条测的是**路径**不是格式。
+    // 顺带守住一条更隐蔽的契约：加载器对这种路径**不许抛异常**（path.string() 在
+    // 英文 locale 的 MSVC 上会抛 system_error；未捕获异常 = debug CRT 的 abort 对话框
+    // = 整条 ctest 无声挂死）。错误消息走 u8string，见 image_stb.cpp 的 displayPath。
+    namespace fs = std::filesystem;
+    // 宽字符字面量直接构造 fs::path：绕开"窄字符串按哪个代码页解释"的歧义。
+    const fs::path dir = fs::path(L"sr_tmp_bmp") / L"中文贴图目录_m5";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) {
+        std::printf("[skip] 无法创建中文目录: %s\n", ec.message().c_str());
+        return;
+    }
+    // 先用生产 writeBmp 写到 ASCII 路径，再把字节搬进中文目录：
+    // writeBmp 收窄字符串（MSVC 下 ANSI），搬运用 ofstream(fs::path) 的宽字符重载。
+    std::string err;
+    writeRedBlueBmp("sr_tmp_bmp/m5_stb_cn_src.bmp", err);
+    SR_ASSERT(err.empty());
+    const fs::path imgPath = dir / L"红蓝.bmp";
+    {
+        std::ifstream in("sr_tmp_bmp/m5_stb_cn_src.bmp", std::ios::binary);
+        std::ofstream out(imgPath, std::ios::binary);
+        out << in.rdbuf();
+        SR_ASSERT(static_cast<bool>(out));
+    }
+
+    sr::ImageRGBA8 img;
+    const bool ok = sr::loadImageFile(imgPath, img, err);
+    SR_ASSERT(ok);
+    if (!ok) std::printf("[stb] 中文路径加载失败: %s\n", err.c_str());
+    if (ok && hasBytes(img, 4 * 2 * 4)) {
+        SR_ASSERT_EQ(img.width, 4);
+        SR_ASSERT_EQ(img.height, 2);
+        SR_ASSERT_EQ(img.rgba[0], 255);   // 上行红（top-down + BGR→RGB 都顺带守住）
+        SR_ASSERT_EQ(img.rgba[2], 0);
+        SR_ASSERT_EQ(img.rgba[4 * 4 + 2], 255);   // 下行蓝
+    }
+    // 清理：中文目录与中转文件都不留在仓库里（sr_tmp_bmp 本身已 gitignore）。
+    fs::remove_all(dir, ec);
+    fs::remove("sr_tmp_bmp/m5_stb_cn_src.bmp", ec);
+#endif
 }

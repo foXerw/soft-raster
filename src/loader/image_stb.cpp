@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 
 // 第三方头在自己的翻译单元里关掉警告（设计文档要求构建输出零警告，为的是"新警告一眼可见"；
 // 一个 7 千行的 vendored 解码器在 /W4 + -Wall -Wextra 下会产出几十条我们无法上游修复的噪声，
@@ -30,12 +31,64 @@
 #endif
 
 namespace sr {
+namespace {
 
-bool loadImageFile(const std::string& path, ImageRGBA8& out, std::string& err) {
+// 错误消息里展示路径用。**不能用 path.string()**：MSVC 上它按 ANSI 代码页转换，
+// 路径含代码页表示不了的字符（英文 locale 机器上的中文目录）时直接抛 system_error ——
+// 加载器的契约是"返回 false + err"，不是抛异常（实测：未捕获异常在测试进程里
+// 触发 debug CRT 的 abort 对话框，表现为整条 ctest 无声挂死）。
+// u8string 是无损的 UTF-8 字节，任何路径都能表示；消息里的中文在 ANSI 控制台可能
+// 显示为乱码，但 err 的内容本身是对的，且 ASCII 路径的字节与原来完全一致。
+std::string displayPath(const std::filesystem::path& p) {
+    const std::u8string u8 = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+}
+
+}  // namespace
+
+bool loadImageFile(const std::filesystem::path& path, ImageRGBA8& out, std::string& err) {
     out = ImageRGBA8{};
     err.clear();
+    const std::string display = displayPath(path);
 
+    // D12：FILE 由我们自己开。解码器的窄字符 fopen 在 MSVC 上是 ANSI 代码页，
+    // 中文目录名会被误解码成"打不开文件"（G-M5.5）。_wfopen 是 CRT（<cstdio>），
+    // 不是 Win32 —— 这里不出现 <windows.h>（C4）。
+#if defined(_MSC_VER)
+    // _wfopen_s 而不是 _wfopen：后者在 /W4 下触发 C4996（零警告是硬约束）。
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"rb") != 0) f = nullptr;
+#elif defined(_WIN32)
+    // MinGW/MSYS2 的 libstdc++ 里 path::value_type 同样是 wchar_t（Windows 风味），
+    // 所以"非 MSVC 就走窄 fopen"在这台机器的 g++ 侧编译不过。_wfopen 是 CRT，
+    // MinGW 也提供；这里没有 /W4 的 C4996 问题。
+    FILE* f = _wfopen(path.c_str(), L"rb");
+#else
+    FILE* f = std::fopen(path.c_str(), "rb");
+#endif
+    if (f == nullptr) {
+        err = display + ": 打不开文件";
+        return false;
+    }
+
+    // D13：**先问后分配**。只读头部拿宽高（不解码、不分配像素缓冲），
+    // 超过 kMaxTextureSide 直接拒绝 —— 与 tgaPayloadFits 同一条纪律：
+    // 一个 18 字节的头不该换走一次 8192x8192x4 = 256 MiB 的分配。
     int w = 0, h = 0, sourceChannels = 0;
+    if (!stbi_info_from_file(f, &w, &h, &sourceChannels)) {
+        std::fclose(f);
+        err = display + ": 无法识别图片头 (" + stbi_failure_reason() + ")";
+        return false;
+    }
+    if (w > kMaxTextureSide || h > kMaxTextureSide) {
+        std::fclose(f);
+        err = display + ": 尺寸 " + std::to_string(w) + "x" + std::to_string(h) +
+              " 超过 kMaxTextureSide=" + std::to_string(kMaxTextureSide) +
+              "（先问后分配：拒绝发生在解码之前）";
+        return false;
+    }
+    std::rewind(f);   // 头探测只消费了头部字节，解码从头开始
+
     // 显式不要竖直翻转：stb 默认输出的第一行就是图像上边缘，与我们的 C8 约定一致。
     // 写出来而不是依赖默认值，是因为"谁翻了一次行"这个问题在 BMP/DIB/PNG 三处都出现过。
     stbi_set_flip_vertically_on_load(0);
@@ -43,14 +96,15 @@ bool loadImageFile(const std::string& path, ImageRGBA8& out, std::string& err) {
     // （灰度复制到 r/g/b、调色板展开、16bit 取高位）。计划里"M4 必须回答"的那条，
     // 答案是用它的 request 参数而不是自己再写一遍位深转换。
     uint8_t* data = static_cast<uint8_t*>(
-        stbi_load(path.c_str(), &w, &h, &sourceChannels, 4));
+        stbi_load_from_file(f, &w, &h, &sourceChannels, 4));
+    std::fclose(f);
     if (data == nullptr) {
-        err = path + ": 无法解码 (" + stbi_failure_reason() + ")";
+        err = display + ": 无法解码 (" + stbi_failure_reason() + ")";
         return false;
     }
     if (w <= 0 || h <= 0) {
         stbi_image_free(data);
-        err = path + ": 尺寸非法";
+        err = display + ": 尺寸非法";
         return false;
     }
     out.width = w;
