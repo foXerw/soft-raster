@@ -31,9 +31,12 @@ namespace sr {
 // vector 扩容会让所有已借出的指针悬垂。所有权：LoadedModel 拥有 textures 与 model；
 // drawModel 每次按组从**当前** textures 取地址填进 FragmentUniforms，借用语义只活在那一次
 // drawRange 调用内。只要 LoadedModel 活到帧末且 textures 不再增长，裸指针就成立。
-// 这条不变式由 drawModel 入口的一道检查守（见 model.cpp：texturePerMaterial 的去重计数
-// 必须等于 textures.size()，post-load 追加会让它失衡），违反时打印消息并拒绝绘制，
+// 这条不变式由 drawModel 入口的一道 **O(1)** 检查守（Ruling 66）：loadModel 成功末尾把
+// 当时的 textures.size() 冻进 texturesFrozenAt；drawModel 入口比较 textures.size() 是否仍等于
+// 它。要守的命题只有一句——"loadModel 返回后 textures 没有再增长过"——它需要的状态是**装载时
+// 的那个 size**，不是内容。post-load 追加（或缩短）会让 size 失衡 ⇒ 打印消息并拒绝绘制，
 // 而不是带着可能悬垂的指针继续画（与 drawRange 丢尾计数同一种"防御而非断言"的房风）。
+// 零分配、零 map、每次 draw 一次比较。
 struct LoadedModel {
     LoadedModel() = default;
     LoadedModel(const LoadedModel&) = delete;
@@ -46,6 +49,7 @@ struct LoadedModel {
     std::vector<int32_t> texturePerMaterial;  // 与 model.materials 平行；下标进 textures，-1 = 无贴图
     ObjStats stats;                       // parseObj 的计数（loadModel 给全新对象，见下）
     std::filesystem::path source;         // 载入用的 OBJ 路径（消息归因用）
+    size_t texturesFrozenAt = 0;          // loadModel 成功末尾的 textures.size()；drawModel 入口守它（Ruling 66）
 };
 
 // 读 OBJ → 扫 mtllib → 逐个读 MTL 并 parseMtl → parseObj → 每个非空 map_Kd 读贴图建纹理。
@@ -56,12 +60,20 @@ struct LoadedModel {
 // （Blender 的 apply 修改器常把贴图放在 mtl 旁边而非 obj 旁边）。去重键是
 // weakly_canonical(mtlDir / 文件名)（D11），于是 `checker.tga` 与 `./checker.tga` 共享一条 mip 链。
 //
+// **文本里的文件名是 UTF-8（Ruling 65）**：mtllib 的每个名字、每个 diffuseMap 都来自 OBJ/MTL
+// **文件内容内部**，是 UTF-8 字节串 —— 这与 argv/拖放路径（M5.6 nativePath 转的那一半）不同，
+// M5.6 碰不到文件内容里的名字，所以必须在这里转。用 pathFromUtf8（char8_t 源构造 path，
+// 见 model.cpp）按 UTF-8 解码，**不能**用 path(std::string)（MSVC 按本地 ANSI 码页解释，
+// 中文贴图名会被误解码成"打不开文件"，症状是所有贴图变纯色 —— 正是 G-M5.1 要防的那类）。
+//
 // **警告 vs 错误的分界（收紧 3，写死在这里）**：
 //   - mtllib 指向的文件**读不到** ⇒ **警告** + 用 defaultMaterial()，几何照常显示。
-//     现实中大量 OBJ 只发了模型没发材质，毙掉整个模型换不来任何正确性。
-//   - map_Kd 指向的文件**读不到** ⇒ **错误**（不降级）。它的症状是"看起来正常但内容是纯色"，
-//     那是最难被发现的一类错，宁可让人去补文件。err 里必须带上那个文件名。
-//   - MTL 文件**存在但解析失败**（坏参数）⇒ 错误（D6：半解析的材质表比没有更糟）。
+//     "文件根本没发"在现实中意味着作者没打算给材质，默认白就是正确解释。
+//   - map_Kd 指向的文件**读不到** ⇒ **错误**（不降级）。err 里必须带上那个文件名。
+//   - MTL 文件**存在但解析失败**（坏参数）⇒ **错误**（D6：半解析的材质表比没有更糟）。
+//   后两者同属一个原则：它们都让材质信息退化成默认白，症状同样是"看起来正常但内容是纯色"
+//   —— 最难被发现的一类错，所以都必须响亮失败，宁可让人去补/修文件。这与"缺 map_Kd 文件 =
+//   错误"是同一原则的两个应用，不矛盾；而"缺整个 MTL 文件"是作者意图问题，降级为警告。
 //
 // **map_Kd 走哪个解码器（Ruling 63，结构性而非性能）**：按**大小写不敏感**的 .tga 后缀分派 ——
 // `.tga` ⇒ loadTgaFile（我们自己的解析器）；其余 ⇒ loadImageFile（第三方解码器）。

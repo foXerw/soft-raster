@@ -459,3 +459,62 @@ SR_TEST(model_loads_from_a_chinese_directory_with_a_spaced_texture_name) {
     fs::remove("sr_tmp_bmp/m54_cn_src.bmp", ec);
 #endif
 }
+
+// ---- Ruling 65: 贴图**文件名本身**是中文（不只是目录）----------------------
+
+SR_TEST(model_loads_a_texture_whose_filename_is_chinese) {
+#ifndef _MSC_VER
+    std::printf("[skip] 中文文件名用例只在 MSVC 判定（C1′，与中文目录用例同一条理由）\n");
+    return;
+#else
+    // 目录是 ASCII，但 map_Kd 指向的文件名是中文 "贴图.tga"。这个名字来自 MTL **文本内部**
+    // （UTF-8），loadModel 必须按 UTF-8 解码成 path（pathFromUtf8）才找得到文件。
+    // 变异：把 path 构造退化成 path(std::string)（MSVC 按 ANSI 码页解释）⇒ 中文误解码 ⇒
+    // 打不开文件 ⇒ 本条红（否则又是"因为别的原因通过"的夹具）。
+    TempDir dir("m54_cn_filename");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n");
+    // MTL 文本里的 map_Kd 名是 UTF-8 字节（源文件 /utf-8）；写文件用宽字符 path 构造。
+    writeText(dir.p / "m.mtl", "newmtl mat\nKd 1 1 1\nmap_Kd 贴图.tga\n");
+    SR_ASSERT(writeSolidTga(dir.p / L"贴图.tga", 2, 2, 200, 100, 50, 255));
+
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(dir.p / "a.obj", m, err);
+    SR_ASSERT(ok);
+    if (!ok) std::printf("[model] 中文贴图名加载失败: %s\n", err.c_str());
+    SR_ASSERT_EQ(m.textures.size(), 1);
+    if (!m.textures.empty()) {
+        const uint8_t* px = m.textures[0].texel(0, 0, 0);
+        SR_ASSERT(px != nullptr);
+        if (px != nullptr) {
+            SR_ASSERT_EQ(px[0], 200);   // 拿到真像素，不是纯色兜底
+            SR_ASSERT_EQ(px[1], 100);
+            SR_ASSERT_EQ(px[2], 50);
+        }
+    }
+#endif
+}
+
+SR_TEST(model_missing_chinese_texture_name_is_an_error_naming_it) {
+#ifndef _MSC_VER
+    std::printf("[skip] 中文文件名用例只在 MSVC 判定（C1′）\n");
+    return;
+#else
+    // map_Kd 指向一个不存在的中文名 ⇒ 错误，且 err 里带得上那个名字（UTF-8 无损，
+    // 不许变成 ? 或 mojibake）。displayPath 走 u8string，所以中文原名能进 err。
+    TempDir dir("m54_cn_missing");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n");
+    writeText(dir.p / "m.mtl", "newmtl mat\nKd 1 1 1\nmap_Kd 缺失.tga\n");
+
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(dir.p / "a.obj", m, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT_FALSE(err.empty());
+    if (err.find("缺失.tga") == std::string::npos)
+        std::printf("[model] 缺中文贴图的 err 是：%s\n", err.c_str());
+    SR_ASSERT(err.find("缺失.tga") != std::string::npos);   // 名字无损进 err
+#endif
+}

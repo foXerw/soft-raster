@@ -35,6 +35,22 @@ bool readWholeFile(const std::filesystem::path& p, std::string& out, std::string
     return true;
 }
 
+// 文本内容里的文件名（mtllib 名、diffuseMap）是 **UTF-8 字节串**（Ruling 65）。按 UTF-8 解码
+// 成 path：用 char8_t 源的 u8string_view 构造（C++20 起 path 对 char8_t 源按 UTF-8 解码）。
+// 为什么是这个写法（两侧实测，零警告硬地板）：
+//   - path(std::string)：MSVC 按**本地 ANSI 码页**解释字节，中文 UTF-8 名被误解码 ⇒ 打不开文件
+//     （实测 MSVC 下 BAD）。这是"中文目录能载入、中文贴图名却找不到"的根源。
+//   - std::filesystem::u8path：C++20 已废弃 ⇒ MSVC C4996/STL4021、g++ -Wdeprecated-declarations
+//     两侧都告警，打破零警告地板。
+//   - path(u8string) / path(char8_t 迭代器)：与本法等价且干净，但 u8string 会多一次临时分配；
+//     u8string_view 零分配，故选它。
+// 注意：这与 M5.6 nativePath（转 argv/拖放路径）是**两处不同的转换** —— 文件内容里的名字
+// M5.6 碰不到，只能在这里转。reinterpret_cast 到 char8_t 是无损的字节重解释（UTF-8 → char8_t）。
+std::filesystem::path pathFromUtf8(std::string_view name) {
+    return std::filesystem::path(
+        std::u8string_view(reinterpret_cast<const char8_t*>(name.data()), name.size()));
+}
+
 // warnings 在这一层打印（D3）：这是唯一同时看得见"文件"与"文本"的一层。
 void printWarnings(const std::filesystem::path& file, const std::vector<std::string>& warnings) {
     const std::string display = lex::displayPath(file);
@@ -50,20 +66,6 @@ bool hasTgaExtension(const std::filesystem::path& p) {
     const char* e = reinterpret_cast<const char*>(ext.data());
     return e[0] == '.' && (e[1] == 't' || e[1] == 'T') && (e[2] == 'g' || e[2] == 'G') &&
            (e[3] == 'a' || e[3] == 'A');
-}
-
-// textures 生命周期不变式的可观测代理（见 model.h）：texturePerMaterial 里**不同**的非负
-// 下标个数必须等于 textures.size()。loadModel 给每张去重后的贴图恰好建一条、且至少被一个
-// 材质引用 ⇒ 构造上相等。post-load 往 textures 追加会让 textures.size() 变大而去重计数不变
-// ⇒ 失衡，drawModel 入口据此拒绝绘制（带着可能悬垂的指针继续画才是真危险）。
-bool texturesInvariantHolds(const LoadedModel& m) {
-    if (m.texturePerMaterial.size() != m.model.materials.size()) return false;
-    std::map<int32_t, bool> seen;
-    for (const int32_t slot : m.texturePerMaterial) {
-        if (slot < -1 || slot >= static_cast<int32_t>(m.textures.size())) return false;
-        if (slot >= 0) seen[slot] = true;
-    }
-    return seen.size() == m.textures.size();
 }
 
 }  // namespace
@@ -82,7 +84,7 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
     std::vector<Material> materials;
     std::vector<std::filesystem::path> materialMtlDir;   // 与 materials 平行：map_Kd 相对它解析
     for (const std::string& name : mtlNames) {
-        const std::filesystem::path mtlPath = objDir / name;
+        const std::filesystem::path mtlPath = objDir / pathFromUtf8(name);   // 文本名是 UTF-8（Ruling 65）
         std::string mtlText;
         std::string readErr;
         if (!readWholeFile(mtlPath, mtlText, readErr)) {
@@ -131,8 +133,9 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
         const std::filesystem::path mtlDir =
             i < materialMtlDir.size() ? materialMtlDir[i] : objDir;
         std::error_code ec;
-        std::filesystem::path key = std::filesystem::weakly_canonical(mtlDir / map, ec);
-        if (ec) key = (mtlDir / map).lexically_normal();   // 不抛：canonical 失败仍尝试加载
+        const std::filesystem::path texPath = mtlDir / pathFromUtf8(map);   // 文本名是 UTF-8（Ruling 65）
+        std::filesystem::path key = std::filesystem::weakly_canonical(texPath, ec);
+        if (ec) key = texPath.lexically_normal();   // 不抛：canonical 失败仍尝试加载
 
         const auto it = dedup.find(key);
         if (it != dedup.end()) {
@@ -159,15 +162,18 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
     }
 
     out.source = objPath;
+    out.texturesFrozenAt = out.textures.size();   // 冻住装载时的 size（Ruling 66，drawModel 入口守它）
     return true;
 }
 
 void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& target,
                const VertexUniforms& vu, const FragmentUniforms& base, FrameStats* stats) {
-    // 入口守 textures 生命周期不变式（model.h）。违反 ⇒ 打印消息 + 拒绝绘制：带着可能
-    // 悬垂的裸指针继续画才是真危险。与 drawRange 的丢尾计数同一种"防御而非断言"的房风
-    // （用消息而不是 <cassert>，也不往冻结的 FrameStats 里塞新字段）。
-    if (!texturesInvariantHolds(m)) {
+    // 入口守 textures 生命周期不变式（model.h，Ruling 66）：要守的命题是"loadModel 返回后
+    // textures 没有再增长过"，只需比较装载时冻住的 size —— O(1)、零分配。违反（追加或缩短）
+    // ⇒ 打印消息 + 拒绝绘制：带着可能悬垂的裸指针继续画才是真危险（FragmentUniforms::texture
+    // 是裸 const Texture*，vector 扩容会让旧指针失效）。与 drawRange 丢尾计数同一种"防御而非
+    // 断言"的房风（用消息而不是 <cassert>，也不往冻结的 FrameStats 里塞新字段）。
+    if (m.textures.size() != m.texturesFrozenAt) {
         std::fprintf(stderr, "[model] %s: textures 不变式被破坏（载入后追加了贴图？），拒绝绘制\n",
                      lex::displayPath(m.source).c_str());
         return;
