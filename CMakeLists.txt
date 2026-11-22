@@ -105,6 +105,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_clipping.cpp
     tests/unit/test_triangle_setup.cpp
     tests/unit/test_pipeline_integration.cpp
+    tests/unit/test_draw_range.cpp
     tests/unit/test_interpolate.cpp
     tests/unit/test_depth.cpp
     tests/unit/test_vertex_color.cpp

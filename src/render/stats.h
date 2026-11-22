@@ -9,6 +9,9 @@ namespace sr {
 // 多线程（M8）下的聚合方式是"每线程一份 + 最后 merge"，不用原子：
 // 原子计数在逐像素路径上是实打实的性能损失，而 tile 之间本来就不共享状态。
 struct FrameStats {
+    // draw call 提交次数（M5.0）：每次进入 drawRange 记一次，与三角形数无关。
+    // 一帧多个 index range（M5 的 OBJ group）时，它是"提交了几次"的唯一计数。
+    int64_t drawCalls = 0;
     int64_t trianglesSubmitted = 0;
     int64_t trianglesClippedOut = 0;
     int64_t trianglesDegenerate = 0;
@@ -34,6 +37,7 @@ struct FrameStats {
     void reset() { *this = FrameStats{}; }
 
     void merge(const FrameStats& o) {
+        drawCalls += o.drawCalls;
         trianglesSubmitted += o.trianglesSubmitted;
         trianglesClippedOut += o.trianglesClippedOut;
         trianglesDegenerate += o.trianglesDegenerate;

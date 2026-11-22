@@ -1,5 +1,7 @@
 #include "render/render_backend.h"
 
+#include <algorithm>
+
 #include "bench/timer.h"
 #include "render/builtin_shaders.h"
 #include "render/clipping.h"
@@ -19,14 +21,25 @@ inline void bump(FrameStats* s, int64_t FrameStats::*field, int64_t n = 1) {
 
 }  // namespace
 
-void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
+void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
+                         uint32_t firstIndex, uint32_t indexCount) {
+    FrameStats* stats = state.stats;
+    // C5：drawCalls 数的是**提交**，每次入口一次，绝不进三角形循环。
+    // 放在早退之前：空区间/无目标的提交也是一次 draw call。
+    bump(stats, &FrameStats::drawCalls);
     if (state.target == nullptr || mesh.indices.empty()) return;
     RenderTarget& target = *state.target;
-    FrameStats* stats = state.stats;
     const Viewport vp = Viewport::fromColorTarget(target.color);
 
+    // firstIndex/indexCount 都是**索引数组**的下标/个数，不是顶点的。
+    // 夹进数组实际范围：坏区间只许少画，不许越界读。
+    const size_t nIndices = mesh.indices.size();
+    const size_t begin = std::min<size_t>(firstIndex, nIndices);
+    const size_t count = std::min<size_t>(indexCount, nIndices - begin);
+    const size_t end = begin + count;
+
     Timer total;
-    bump(stats, &FrameStats::trianglesSubmitted, mesh.triangleCount());
+    bump(stats, &FrameStats::trianglesSubmitted, static_cast<int64_t>(count / 3));
 
     // 一个已裁剪的三角形：VS 输出 → 投影 → Setup → 逐像素。
     // 写成 lambda 而不是函数，是为了让它对这些引用保持内联（C5：内层不许间接派发）。
@@ -93,7 +106,7 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
         bump(stats, &FrameStats::trianglesRasterized);
     };
 
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+    for (size_t i = begin; i + 2 < end; i += 3) {
         // ---- Vertex Shader ----
         ClipVertex cv[3];
         for (int k = 0; k < 3; ++k) {
@@ -116,6 +129,11 @@ void BackendA::draw(const Mesh& mesh, const PipelineState& state) {
         // ---- 扇形重三角化：凸多边形 out[0], out[i], out[i+1] ----
         for (int t = 1; t + 1 < n; ++t) rasterOne(clipped[0], clipped[t], clipped[t + 1]);
     }
+
+    // 残缺尾巴（count % 3 != 0）：防御性分支 —— parseObj（M5.2）保证 group 3 对齐，
+    // 生产代码目前到不了这里（Ruling 45：保留）。一个坏 group 只记一次 degenerate，
+    // 不许断言带走整帧，更不许把尾巴凑成三角形越界读（Review Focus 3）。
+    if (count % 3 != 0) bump(stats, &FrameStats::trianglesDegenerate);
 
     if (stats != nullptr) stats->msTotal += total.elapsedMs();
 }
