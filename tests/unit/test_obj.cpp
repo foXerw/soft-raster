@@ -234,6 +234,36 @@ SR_TEST(obj_drops_degenerate_faces_without_failing) {
     }
 }
 
+SR_TEST(obj_mid_group_degenerate_face_keeps_groups_contiguous) {
+    // P9（M5.2 遗留，M5.4 补）：上一条退化面夹具丢的是**最前面**的面（group 还没建）。
+    // 这条把退化面放在 group **中间**（已发射若干索引之后）：丢弃必须不打断 run 的相邻性、
+    // 不留缝隙，indexOffset/indexCount 仍首尾相接且 %3==0 —— drawModel 正是按这些偏移喂
+    // drawRange，失去同步就是越界或漏画。变异：若退化面不被丢（或丢弃挪到发射之后），
+    // indices.size()/triangles/indexCount 会失衡 ⇒ 下面的连续性断言红。
+    const ObjResult r = parse(
+        "v 0 0 0\n"
+        "v 1 0 0\n"
+        "v 0 1 0\n"
+        "v 1 1 0\n"
+        "usemtl A\n"
+        "f 1 2 3\n"        // 保留：发射 3 索引，group A 建立
+        "f 1 1 1\n"        // 退化：丢弃（group 已存在、已有索引）
+        "f 1 3 4\n",       // 保留：再发射 3 索引 ⇒ 同组累计 6
+        {namedMaterial("A", 1.0f)});
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.groups.size(), 1);      // 退化面不打断 run
+    SR_ASSERT_EQ(r.stats.triangles, 2);
+    SR_ASSERT_EQ(r.out.mesh.indices.size(), 6);
+    SR_ASSERT_EQ(r.warnings.size(), 1);        // 仅退化面一条警告
+    uint32_t covered = 0;
+    for (const sr::MeshGroup& g : r.out.groups) {
+        SR_ASSERT_EQ(g.indexCount % 3, 0);
+        SR_ASSERT_EQ(g.indexOffset, covered);  // 首尾相接，无缝隙无重叠
+        covered += g.indexCount;
+    }
+    SR_ASSERT_EQ(covered, r.out.mesh.indices.size());
+}
+
 SR_TEST(obj_rejects_faces_with_fewer_than_three_vertices) {
     // 少于 3 个角是 D6 结构性错误：false + out 清空 + err 带行号。
     const ObjResult r = parse(

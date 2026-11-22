@@ -114,6 +114,34 @@ SR_TEST(draw_calls_are_counted_per_submission) {
     SR_ASSERT_EQ(s3.trianglesRasterized, 0);
 }
 
+SR_TEST(draw_range_clamps_out_of_bounds_first_index_and_count) {
+    // P1（M5.0 遗留，M5.4 补）：两个防御夹钳此前**没有测试** —— 删掉 std::min 会让
+    // firstIndex 越界时 nIndices-begin 下溢成巨数，进而越界读 indices。这里钉住夹钳的行为。
+    // 额外断言 degenerate==0：让"夹钳被削弱但仍落在界内"的变异（begin 夹到 nIndices-1、
+    // count 夹到 remaining+1）也能在断言级变红，而不必依赖越界 abort 当证据。
+    Canvas c{kW, kH};
+    const sr::Mesh m = twoTriangles();   // 6 个索引
+    sr::BackendA backend;
+
+    // firstIndex 远超末尾 ⇒ begin 夹到 6、count 夹到 0：一次提交、零三角形、不崩。
+    sr::FrameStats s1;
+    auto st1 = makeState(c, s1);
+    backend.drawRange(m, st1, 99, 3);
+    SR_ASSERT_EQ(s1.drawCalls, 1);
+    SR_ASSERT_EQ(s1.trianglesSubmitted, 0);
+    SR_ASSERT_EQ(s1.trianglesRasterized, 0);
+    SR_ASSERT_EQ(s1.trianglesDegenerate, 0);   // count==0 ⇒ 无残缺尾巴
+
+    // indexCount 超大 ⇒ 夹成剩余全量（2 个三角形），不是越界读。
+    sr::FrameStats s2;
+    auto st2 = makeState(c, s2);
+    backend.drawRange(m, st2, 0, UINT32_MAX);
+    SR_ASSERT_EQ(s2.drawCalls, 1);
+    SR_ASSERT_EQ(s2.trianglesSubmitted, 2);
+    SR_ASSERT_EQ(s2.trianglesRasterized, 2);
+    SR_ASSERT_EQ(s2.trianglesDegenerate, 0);
+}
+
 SR_TEST(draw_range_with_a_truncated_tail_drops_it_and_counts_degenerate) {
     // 防御性分支（Ruling 45）：parseObj（M5.2）保证 group 一律 3 对齐，生产代码目前
     // **到不了**这条尾巴 —— 保留它不是死代码，而是"一个坏 group 只记一次 degenerate，
