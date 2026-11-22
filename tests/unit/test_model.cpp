@@ -340,6 +340,29 @@ SR_TEST(draw_model_keeps_texture_and_uv_for_textured_groups) {
     SR_ASSERT_EQ(c.rt.color.readPacked(56, 32), sr::encodeSRGB(sr::LinearColor{0, 0, 1}));
 }
 
+SR_TEST(draw_model_refuses_when_textures_grew_after_load) {
+    // textures 生命周期不变式（model.h）：载入后追加贴图会让去重计数 != textures.size()，
+    // drawModel 入口必须拒绝绘制（带着可能悬垂的裸指针继续画才是真危险），而不是崩或画坏。
+    TempDir dir("m54_invariant");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n");
+    writeText(dir.p / "m.mtl", "newmtl mat\nKd 1 1 1\nmap_Kd tex.tga\n");
+    SR_ASSERT(writeSolidTga(dir.p / "tex.tga", 2, 2, 1, 2, 3, 255));
+    sr::LoadedModel m;
+    std::string err;
+    SR_ASSERT(sr::loadModel(dir.p / "a.obj", m, err));
+    SR_ASSERT_EQ(m.textures.size(), 1);
+    // 故意违反不变式：loadModel 返回后再 push 一条贴图。
+    m.textures.push_back(sr::makeTexture(solidImage(2, 2, 9, 9, 9, 255), true));
+
+    Canvas c{kW, kH};
+    c.rt.color.clear(kBg);
+    sr::BackendA backend;
+    sr::FrameStats s;
+    sr::drawModel(backend, m, c.rt, identityVu(), baseFu(), &s);
+    SR_ASSERT_EQ(s.drawCalls, 0);   // 拒绝绘制 ⇒ 一次提交都没有
+}
+
 // ---- Step 5: sRGB 双重解码守卫（Review Focus 5）----------------------------
 
 SR_TEST(srgb_file_texture_and_linear_kd_land_on_the_same_brightness_as_a_white_tint) {
