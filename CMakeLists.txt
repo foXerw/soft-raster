@@ -115,6 +115,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_vertex_color.cpp
     tests/unit/test_sink.cpp
     tests/unit/test_camera.cpp
+    tests/unit/test_fit.cpp
     tests/unit/test_input.cpp
     tests/unit/test_texture.cpp
     tests/unit/test_sampler.cpp
