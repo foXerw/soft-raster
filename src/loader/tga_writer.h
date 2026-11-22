@@ -10,6 +10,7 @@
 // bit5 = 0，TGA 的历史默认）**。这不是疏忽而是设计 §10 锚 2 的前提：读回这样一个文件
 // 必然要走一次行翻转，"TGA 行序翻译"那条路径才有东西可守。若写成 top-down + bit5=1，
 // 读回不翻转，锚 2 就退化成一次无翻转的 memcpy。
+#include <filesystem>
 #include <string>
 
 #include "render/texture.h"   // ImageRGBA8
@@ -18,6 +19,10 @@ namespace sr {
 
 // 失败返回 false、err 非空。校验（尺寸为正、u16 范围内、字节数与宽高一致）发生在
 // 打开文件**之前**：先打开再校验会把已存在的同名文件截断成 0 字节（bmp_writer 同款纪律）。
-bool writeTga(const std::string& path, const ImageRGBA8& img, std::string& err);
+//
+// path 用 std::filesystem::path（D12 的写侧对称，控制者追加裁决）：std::string 隐式
+// 转换，既有调用点源码兼容；MSVC 的 ofstream(fs::path) 走宽字符打开，中文目录能写。
+// "读贴图支持中文、写 TGA 不支持"的不对称会在下一轮被复制（M5.6 nativePath），故补齐。
+bool writeTga(const std::filesystem::path& path, const ImageRGBA8& img, std::string& err);
 
 }  // namespace sr

@@ -13,10 +13,19 @@ void putLE16(std::vector<uint8_t>& out, int v) {
     out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
 }
 
+// 与 image_stb.cpp / image_tga.cpp 的同名函数同一条理由：path.string() 在 MSVC 上
+// 对 ANSI 代码页表示不了的路径会抛 system_error，而写出器的契约是返回 false + err。
+// 展示用 u8string 的 UTF-8 字节，无损且不抛。core 不链 loader，故各自持有这 4 行。
+std::string displayPath(const std::filesystem::path& p) {
+    const std::u8string u8 = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
+}
+
 }  // namespace
 
-bool writeTga(const std::string& path, const ImageRGBA8& img, std::string& err) {
+bool writeTga(const std::filesystem::path& path, const ImageRGBA8& img, std::string& err) {
     err.clear();
+    const std::string display = displayPath(path);   // 错误消息用；UTF-8 仅做展示
 
     // ---- 校验：必须在动任何文件之前完成（bmp_writer 的同款纪律）-------------
     // 先打开文件再发现参数不对，已存在的同名资产会被截断成 0 字节 —— 而锚 2 失败时
@@ -72,15 +81,16 @@ bool writeTga(const std::string& path, const ImageRGBA8& img, std::string& err) 
         }
     }
 
+    // ofstream 的 fs::path 重载：MSVC 下走宽字符打开（D12 写侧）。
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
-        err = "writeTga: cannot open '" + path + "' for writing (does the directory exist?)";
+        err = "writeTga: cannot open '" + display + "' for writing (does the directory exist?)";
         return false;
     }
     file.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
     file.close();
     if (!file) {
-        err = "writeTga: write to '" + path + "' failed";
+        err = "writeTga: write to '" + display + "' failed";
         return false;
     }
     return true;
