@@ -1,5 +1,7 @@
 #include "loader/image_stb.h"
 
+#include "loader/lex.h"   // lex::displayPath（跨 TU 共用，M5.3 评审 Important 2）
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -31,25 +33,11 @@
 #endif
 
 namespace sr {
-namespace {
-
-// 错误消息里展示路径用。**不能用 path.string()**：MSVC 上它按 ANSI 代码页转换，
-// 路径含代码页表示不了的字符（英文 locale 机器上的中文目录）时直接抛 system_error ——
-// 加载器的契约是"返回 false + err"，不是抛异常（实测：未捕获异常在测试进程里
-// 触发 debug CRT 的 abort 对话框，表现为整条 ctest 无声挂死）。
-// u8string 是无损的 UTF-8 字节，任何路径都能表示；消息里的中文在 ANSI 控制台可能
-// 显示为乱码，但 err 的内容本身是对的，且 ASCII 路径的字节与原来完全一致。
-std::string displayPath(const std::filesystem::path& p) {
-    const std::u8string u8 = p.u8string();
-    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
-}
-
-}  // namespace
 
 bool loadImageFile(const std::filesystem::path& path, ImageRGBA8& out, std::string& err) {
     out = ImageRGBA8{};
     err.clear();
-    const std::string display = displayPath(path);
+    const std::string display = lex::displayPath(path);   // 共用一份，理由见 lex.h
 
     // D12：FILE 由我们自己开。解码器的窄字符 fopen 在 MSVC 上是 ANSI 代码页，
     // 中文目录名会被误解码成"打不开文件"（G-M5.5）。_wfopen 是 CRT（<cstdio>），

@@ -123,10 +123,15 @@ SR_TEST(tga_writer_rejects_an_empty_image) {
     bad.width = 2; bad.height = 2; bad.rgba.assign(4, 0);
     SR_ASSERT_FALSE(sr::writeTga(kEmptyGuardPath, bad, err));
     SR_ASSERT_FALSE(err.empty());
-    // TGA 宽高是 u16：65536 不拒绝就会静默截断成 0 宽，读回来是另一张图
-    bad.width = 65536; bad.height = 1; bad.rgba.clear();
+    // TGA 宽高是 u16：65536 不拒绝就会静默截断成 0 宽，读回来是另一张图。
+    // 夹具必须带**正确大小**的 rgba（65536*1*4）：rgba 为空时字节数守卫会先拒绝，
+    // 本断言就对它点名的 u16 守卫是盲的（评审 Important 1，变异验证：删 u16 守卫
+    // 而夹具不带字节 ⇒ 测试照绿）。字节数正确 ⇒ u16 是唯一能拒绝的那一道；
+    // err 文本再钉一次，确保拒绝来自**这个**守卫而不是别的。
+    bad.width = 65536; bad.height = 1; bad.rgba.assign(65536u * 4u, 0);
     SR_ASSERT_FALSE(sr::writeTga(kEmptyGuardPath, bad, err));
     SR_ASSERT_FALSE(err.empty());
+    SR_ASSERT(err.find("65535") != std::string::npos);
 
     // 校验必须发生在打开文件**之前**（bmp_writer 的同款纪律）：
     // 先放一个哨兵文件，非法调用之后它必须原样还在，而不是被截断成 0 字节。

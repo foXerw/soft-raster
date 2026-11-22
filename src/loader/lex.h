@@ -1,15 +1,23 @@
 #pragma once
-// 两个文本解析器（mtl.cpp / obj.cpp）共用的**内部**词法层（M5.2 评审 Important 2 提炼）。
-// header-only，随两个 .cpp 进 soft_raster_core，不新增编译单元、不进 CMake 源文件列表。
-// **不是公共 API**：只给 src/loader 的解析器 include，不导出给 app/tests。
+// src/loader 各 TU 共用的**内部**帮手层（M5.2 评审 Important 2 提炼词法；
+// M5.3 评审 Important 2 收进跨 TU 的路径→可显示字符串 displayPath）。
+// header-only，随 includer 进 soft_raster_core / soft_raster_loader，不新增编译单元、
+// 不进 CMake 源文件列表。**不是公共 API**：只给 src/loader 的 .cpp include，不导出给 app/tests。
 //
 // 为什么共用一份而不是各写各的：tests/unit/test_util.h:16 已经写过这条教训 ——
 // "副本的用法是先各自悄悄改样，然后两条测试对同一个函数给出不同的结论"。
 // MTL 与 OBJ 对畸形输入的容忍必须同构（CRLF/裸 CR/BOM/tab/多空格/坏数字），
 // 这份同构由"同一份代码"保证，而不是由"两份今天恰好一样的副本"保证。
 // 提炼时以 obj.cpp 的帮手形态为准（nextLine/skipBom 比 mtl.cpp 原来的内联块更干净）。
+//
+// 依赖方向（M5.3 评审纠正过一条**听起来对**的错误理由）：**loader 链 core**，
+// 所以 core 侧的 header-only 帮手服务 loader 的三个 TU（image_stb / image_tga /
+// tga_writer）毫无障碍；"core 不链 loader"是对的，但它推不出"不能共用 core 侧帮手"。
+// C2 禁的是 core 接触第三方解码器，不是这种中性共享头。
 #include <charconv>
 #include <cmath>
+#include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -65,6 +73,17 @@ inline size_t skipBom(std::string_view text) {
         static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF)
         return 3;
     return 0;
+}
+
+// 路径 → 可显示字符串（错误消息用）。**不能用 path.string()**：MSVC 上它按 ANSI
+// 代码页转换，路径含代码页表示不了的字符（英文 locale 机器上的中文目录）时直接抛
+// system_error —— 加载器/写出器的契约是"返回 false + err"，不是抛异常（实测：未捕获
+// 异常触发 debug CRT 的 abort 对话框，表现为整条 ctest 无声挂死；见 tests/main.cpp 硬化）。
+// u8string 是无损的 UTF-8 字节，任何路径都能表示；消息里的中文在 ANSI 控制台可能显示
+// 为乱码，但 err 的内容本身是对的，且 ASCII 路径的字节与窄字符旧版完全一致。
+inline std::string displayPath(const std::filesystem::path& p) {
+    const std::u8string u8 = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
 }
 
 }  // namespace lex

@@ -1,5 +1,7 @@
 #include "loader/image_tga.h"
 
+#include "loader/lex.h"   // lex::displayPath（跨 TU 共用，M5.3 评审 Important 2）
+
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -17,15 +19,6 @@ bool readU16LE(const uint8_t* d, size_t size, size_t at, int& out) {
 
 std::string fail(const std::string& path, const std::string& why) {
     return (path.empty() ? std::string("tga: ") : path + ": tga: ") + why;
-}
-
-// 与 image_stb.cpp 的同名函数同一条理由：path.string() 在 MSVC 上对 ANSI 代码页
-// 表示不了的路径（英文 locale 机器上的中文目录）会抛 system_error，而加载器的契约
-// 是返回 false + err。展示用 UTF-8 字节，无损且不抛。两个模块各自持有这个 4 行
-// 函数而不是互相 include：stb 封装与手写 TGA 是两条独立的解码路径（C2 的分层）。
-std::string displayPath(const std::filesystem::path& p) {
-    const std::u8string u8 = p.u8string();
-    return std::string(reinterpret_cast<const char*>(u8.data()), u8.size());
 }
 
 }  // namespace
@@ -191,7 +184,7 @@ bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& er
 
 bool loadTgaFile(const std::filesystem::path& path, ImageRGBA8& out, std::string& err) {
     out = ImageRGBA8{};
-    const std::string display = displayPath(path);   // 错误消息用；UTF-8 仅做展示
+    const std::string display = lex::displayPath(path);   // 共用一份，理由见 lex.h
     // ifstream 的 fs::path 重载：MSVC 下走宽字符打开，中文目录名因此能读（D12）。
     std::ifstream f(path, std::ios::binary | std::ios::ate);
     if (!f) {
