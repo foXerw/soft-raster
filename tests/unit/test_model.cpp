@@ -154,6 +154,22 @@ SR_TEST(model_missing_mtl_file_is_a_warning_and_still_draws) {
     SR_ASSERT(m.textures.empty());
 }
 
+SR_TEST(model_mtl_present_but_malformed_is_an_error) {
+    // Minor 2（评审）/ Ruling 64 第三臂：MTL 文件**存在但解析失败**（坏参数）⇒ 错误，不是警告。
+    // 它与"缺 map_Kd 文件 = 错误"同原则：退化成默认白会让画面"看起来正常但纯色"，必须响亮失败。
+    // 变异：把 parseMtl 失败分支降级成警告 + continue ⇒ ok 变 true ⇒ 本条红。
+    TempDir dir("m54_badmtl");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n");
+    writeText(dir.p / "m.mtl", "newmtl mat\nKd 0.5abc 0 0\n");   // 坏数字 ⇒ parseMtl D6 失败
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(dir.p / "a.obj", m, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT_FALSE(err.empty());
+    SR_ASSERT(m.textures.empty());   // 失败不留半成品
+}
+
 SR_TEST(model_without_mtllib_gets_one_default_material) {
     // 纯 OBJ：能画，纯色白（defaultMaterial 的 Kd 是 1 1 1，不是 pipeline 的 0.8 灰）。
     TempDir dir("m54_nomtl");
@@ -340,9 +356,45 @@ SR_TEST(draw_model_keeps_texture_and_uv_for_textured_groups) {
     SR_ASSERT_EQ(c.rt.color.readPacked(56, 32), sr::encodeSRGB(sr::LinearColor{0, 0, 1}));
 }
 
+SR_TEST(draw_model_switches_texture_per_group) {
+    // Important 1（评审）：逐组**贴图**切换此前无判别夹具 —— tint 那半边有牙（变异 #3），
+    // 贴图那半边没有（twomats 两贴图材质共用一张图、去重测试断言对称的 [0]==[1]）。
+    // 这里两个组绑两张**不同**的纯色 TGA（红/蓝），两者 Kd 都给白 ⇒ 像素颜色**只能**来自
+    // 贴图选择，不可能来自 tint。把槽位或贴图地址写成恒 [0]（tint 仍对、贴图错）⇒ 本条红。
+    // Ruling 67：对"按组切换"的每一份状态做交换变异，而不是置空（置空只证明读了它）。
+    TempDir dir("m54_draw_texswitch");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\n"
+              "v 0.1 0.1 0.5\nv 0.9 0.1 0.5\nv 0.5 0.9 0.5\n"
+              "v -0.9 -0.9 0.5\nv -0.1 -0.9 0.5\nv -0.5 -0.1 0.5\n"
+              "vt 0 0\nvt 1 0\nvt 1 1\n"
+              "usemtl red\nf 1/1 2/2 3/3\n"
+              "usemtl blue\nf 4/1 5/2 6/3\n");
+    writeText(dir.p / "m.mtl",
+              "newmtl red\nKd 1 1 1\nmap_Kd red.tga\n"
+              "newmtl blue\nKd 1 1 1\nmap_Kd blue.tga\n");
+    SR_ASSERT(writeSolidTga(dir.p / "red.tga", 2, 2, 255, 0, 0, 255));
+    SR_ASSERT(writeSolidTga(dir.p / "blue.tga", 2, 2, 0, 0, 255, 255));
+
+    sr::LoadedModel m;
+    std::string err;
+    SR_ASSERT(sr::loadModel(dir.p / "a.obj", m, err));
+    SR_ASSERT_EQ(m.textures.size(), 2);   // 两张不同的图，不去重
+
+    Canvas c{kW, kH};
+    c.rt.color.clear(kBg);
+    sr::BackendA backend;
+    sr::FrameStats s;
+    sr::drawModel(backend, m, c.rt, identityVu(), baseFu(), &s);
+    SR_ASSERT_EQ(s.drawCalls, 2);
+    SR_ASSERT_EQ(c.rt.color.readPacked(48, 20), sr::encodeSRGB(sr::LinearColor{1, 0, 0}));  // red 组
+    SR_ASSERT_EQ(c.rt.color.readPacked(16, 52), sr::encodeSRGB(sr::LinearColor{0, 0, 1}));  // blue 组
+}
+
 SR_TEST(draw_model_refuses_when_textures_grew_after_load) {
-    // textures 生命周期不变式（model.h）：载入后追加贴图会让去重计数 != textures.size()，
-    // drawModel 入口必须拒绝绘制（带着可能悬垂的裸指针继续画才是真危险），而不是崩或画坏。
+    // textures 生命周期不变式（model.h，Ruling 66）：载入后追加贴图会让
+    // textures.size() != texturesFrozenAt（装载时冻住的 size），drawModel 入口必须拒绝绘制
+    // （带着可能悬垂的裸指针继续画才是真危险），而不是崩或画坏。
     TempDir dir("m54_invariant");
     writeText(dir.p / "a.obj",
               "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n");
@@ -403,9 +455,10 @@ SR_TEST(model_loads_from_a_chinese_directory_with_a_spaced_texture_name) {
     return;
 #else
     // D12 / G-M5.5：中文**目录** + `map_Kd -s 1 1 1 my brick.png`（选项 token + 含空格文件名）。
-    // 目录用宽字符 fs::path 传给 loadModel（ifstream(path) 宽字符打开）；目录内的 obj/mtl/贴图
-    // 文件名是 ASCII。**OBJ 文本里嵌的 UTF-8 文件名 → path 的编码转换是 M5.6 的 nativePath**
-    // （D18：全仓库唯一的编码转换处），不在本任务范围 —— 所以这里 mtllib/map_Kd 都用 ASCII 名。
+    // 目录用宽字符 fs::path 传给 loadModel（ifstream(path) 宽字符打开）；本条夹具内的 obj/mtl/贴图
+    // 文件名是 ASCII（中文**文件名**由下面两条 Ruling 65 用例专门覆盖）。OBJ/MTL 文本里嵌的 UTF-8
+    // 文件名 → path 的转换由 loadModel 的 pathFromUtf8 负责（Ruling 65，本任务已实现）；M5.6 的
+    // nativePath 转的是 argv/拖放那一半，碰不到文件内容里的名字，两处是不同的转换。
     // 后缀 .png ⇒ Ruling 63 分派到第三方解码器；本项目没有 PNG 编码器（设计 §3 非目标），
     // 夹具实际是 BMP 字节命名 .png（与 test_image_stb.cpp 的中文路径用例同一先例）——
     // 第三方按**内容**嗅探格式，这条测的是路径/选项/分派，不是 PNG 编码。
