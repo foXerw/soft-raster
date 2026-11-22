@@ -106,7 +106,9 @@
 
 - [ ] **Step 2: 验证退出码这件事（一次性改动，不许提交）**
 
-Run: `cmake --build build --config Debug && ./build/Debug/soft_raster_tests.exe --only test_smoke; echo "rc=$?"` → 期望 `rc=0`。
+Run: `cmake --build build --config Debug && ./build/Debug/soft_raster_tests.exe --only harness_; echo "rc=$?"` → 期望 `rc=0`。
+（**原文写的是 `--only test_smoke`，那是个不存在的用例名** —— 文件名是 `test_smoke.cpp`，里面的用例名全是 `harness_*`。
+零匹配会让 rc=1，所以照原文跑会把"过滤器敲错"误读成"夹钳没生效"。这条错由 M5.0 的实现者抓出，见账本 Ruling 51。）
 然后**临时**把 `tests/unit/test_smoke.cpp` 里任意一条断言改成 `SR_ASSERT(false)`，重跑，期望 `rc=1`（不是 2、不是 255），再 `git checkout tests/unit/test_smoke.cpp` 撤销。
 
 - [ ] **Step 3: 写 `drawRange` 的失败测试**
@@ -137,12 +139,15 @@ Run: `cmake --build build --config Debug` → 期望**编译失败**（`drawRang
 
 ```bash
 cmake --build build --config Debug 2>&1 | grep -E "warning|error"   # 必须为空，否则本轮结论作废
-ctest --test-dir build -C Debug --timeout 60                        # 全绿
-./build/Debug/soft-raster.exe --golden-write build/chk-m3.bmp >/dev/null
+ctest --test-dir build -C Debug --timeout 60                        # 全绿（M3 那张由 ±1 门禁判）
 ./build/Debug/soft-raster.exe --golden-write-textured build/chk-m4.bmp >/dev/null
-md5sum build/chk-m3.bmp assets/golden/m3_cube.bmp
-md5sum build/chk-m4.bmp assets/golden/m4_textured_cube.bmp          # 两对 md5 必须各自相同
+md5sum build/chk-m4.bmp assets/golden/m4_textured_cube.bmp          # **这对 md5 必须相同**
 ```
+**M3 那张不做 md5 门禁**（账本 Ruling 50）：`assets/golden/m3_cube.bmp` 最后写于 `3f8cc2a`，
+之后 `src/render`/`src/scene` 又变了 11 个提交而参考图没重生成 ⇒ 今天生成出来与参考图差 2 个字节（±1），
+**这在 `main` 上就成立**，不是任何重构造成的。M3 的一致性由 ctest 的 ±1/255 门禁判（C1′ 的原意）。
+M4 那张实测**逐字节可复现**，而锚 3 正是依赖这个性质（见 M5.7 Step 5）。
+是否要重新生成 M3 参考图 = 纪律 #4 的授权事项，留给产品方，见 M5.8 Step 5。
 
 - [ ] **Step 7: 变异验证（Step 3 的三条必须有牙齿）**
 
@@ -742,8 +747,8 @@ ctest --test-dir build -C Debug --timeout 60
 cmake --build build --config Release --clean-first 2>&1 | grep -E "warning|error"   # 纪律③：--clean-first
 ctest --test-dir build -C Release --timeout 60
 cmake --build build-gcc 2>&1 | grep -E "warning|error"; ctest --test-dir build-gcc --timeout 60
-./build/Debug/soft-raster.exe --golden-write build/e3.bmp && md5sum build/e3.bmp assets/golden/m3_cube.bmp
 ./build/Debug/soft-raster.exe --golden-write-textured build/e4.bmp && md5sum build/e4.bmp assets/golden/m4_textured_cube.bmp
+# M3 那张只由 ctest 的 ±1 门禁判，不做 md5（Ruling 50）
 grep -rn "stb_image" src/          # 只命中 image_stb.*（C2）
 grep -rn "windows.h" src/render src/math src/scene src/loader   # 只应命中 image_stb 的 _wfopen 分支之外**无**（C4）
 ```
@@ -762,6 +767,12 @@ deferred 那四条里关掉三条、留下一条（alpha 混合，理由）。
 
 - [ ] **Step 4: 上游 spec 加脚注**（不做这一步，下一个读 spec 的人会以为 M5 没照 §7.5 做，而不是照 D15 改了它）：
 在 §7.5 的 fit 那句与资产清单那句各加一行 `> 偏离见 2026-11-22-soft-raster-m5-obj-design.md D15 / D14 续（M5 实施时定）`。
+
+- [ ] **Step 4.5: 向产品方提一件本里程碑发现的既有事实（不自行处理）**
+`assets/golden/m3_cube.bmp` 与今天生成的输出差 2 个字节（±1），因为参考图停在 `3f8cc2a` 而 `src/` 之后又变了 11 个提交。
+它在 ±1 门禁下是绿的，**不是缺陷**；但它意味着"M3 的 md5 可复现"这句话从某个提交起就不再成立，
+而 anyone 拿它当门禁就会误判自己的重构。两个选项交给产品方：重新生成（纪律 #4 要求先肉眼验收）
+或在 `assets/golden/README.md` 里写明"M3 只做 ±1 判定，md5 不是它的门禁"。**不要自己重生成。**
 
 - [ ] **Step 5: 账本写完**：Rulings 43 起，把本计划"六处收紧"、每个任务的变异验证结果、
 以及 deferred 的处置写进去。**不删工作区**（`.superpowers/` 不在 git 里，删 = 销毁记录）。
