@@ -42,6 +42,47 @@ void assertAllCornersInsideNdc(const sr::BBox& bounds, const sr::Mat4& proj, con
             }
 }
 
+// 输入守卫用例共用的"什么都没动"断言（形状照 sub-epsilon 用例）：base 各字段原样 +
+// 结构体默认 near/far；再把盒中心投一次，证明退回的相机真能建出有限投影，不是另一条 NaN 路径。
+// proj 用合法的 kFovY/16:9 构建——退化的是 fitCamera 的输入，不是这次投影检查的输入。
+void assertBaseUntouchedAndRenderable(const sr::FittedCamera& f, const sr::OrbitCamera& base,
+                                      const sr::BBox& bounds) {
+    SR_ASSERT_NEAR(f.camera.distance, base.distance, 1e-6f);
+    SR_ASSERT_NEAR(f.camera.yaw, base.yaw, 1e-6f);
+    SR_ASSERT_NEAR(f.camera.pitch, base.pitch, 1e-6f);
+    SR_ASSERT_NEAR(f.camera.target.x, base.target.x, 1e-6f);
+    SR_ASSERT_NEAR(f.camera.target.y, base.target.y, 1e-6f);
+    SR_ASSERT_NEAR(f.camera.target.z, base.target.z, 1e-6f);
+    SR_ASSERT_NEAR(f.nearPlane, 0.1f, 1e-6f);
+    SR_ASSERT_NEAR(f.farPlane, 100.0f, 1e-6f);
+    const sr::Mat4 proj = sr::makePerspective(kFovY, 16.0f / 9.0f, f.nearPlane, f.farPlane);
+    const sr::Mat4 view = f.camera.view();
+    for (int row = 0; row < 4; ++row)
+        for (int col = 0; col < 4; ++col) {
+            SR_ASSERT(std::isfinite(proj.m[row][col]));
+            SR_ASSERT(std::isfinite(view.m[row][col]));
+        }
+    const sr::Vec4 clip = proj * view * sr::makeVec4(bounds.center(), 1.0f);
+    SR_ASSERT(clip.w > 0.0f);
+    const sr::Vec3 ndc = sr::perspectiveDivide(clip);
+    SR_ASSERT(std::isfinite(ndc.x) && std::isfinite(ndc.y) && std::isfinite(ndc.z));
+    SR_ASSERT(ndc.x >= -1.0f && ndc.x <= 1.0f);
+    SR_ASSERT(ndc.y >= -1.0f && ndc.y <= 1.0f);
+    SR_ASSERT(ndc.z >= -1.0f && ndc.z <= 1.0f);
+}
+
+// 四个守卫用例共用同一个非默认、不对称的 base：yaw/pitch 非零，distance 11 不等于任何
+// fit 值（1.6 盒的 fit 值是 2.77128 / 4.48603），target 非原点。盒是合法 1.6 立方体：
+// 退化的是 fov/aspect 输入，不是 bounds——守卫必须独立于 Ruling 49 的 bounds 分支起作用。
+sr::OrbitCamera guardTestBase() {
+    sr::OrbitCamera base;
+    base.yaw = 0.7f;
+    base.pitch = -0.31f;
+    base.distance = 11.0f;
+    base.target = sr::Vec3{3.0f, -5.0f, 2.0f};
+    return base;
+}
+
 }  // namespace
 
 SR_TEST(fit_matches_the_documented_formula_on_the_m4_cube) {
@@ -62,7 +103,9 @@ SR_TEST(fit_matches_the_documented_formula_on_the_m4_cube) {
     // fit 只发生在调用方自己的相机里，golden 的姿态常量（golden_scene.h:23-27）继续有效。
     SR_ASSERT_NEAR(f.camera.distance, 2.77128f, 1e-5f);
     SR_ASSERT_NEAR(f.nearPlane, 0.001386f, 1e-5f);
-    SR_ASSERT_NEAR(f.farPlane, 13.8564f, 1e-5f);
+    // 期望取 13.85641f 而不是 13.8564f：真值 13.8564065，13.8564 偏 6.5e-6，
+    // 在跨编译器抖动（r 上 1–2 ulp ⇒ far 上 ~2.4e-6）之前就吃掉 1e-5 容差的 65%。居中后余量翻倍。
+    SR_ASSERT_NEAR(f.farPlane, 13.85641f, 1e-5f);
     SR_ASSERT_NEAR(f.camera.target.x, center.x, 1e-5f);
     SR_ASSERT_NEAR(f.camera.target.y, center.y, 1e-5f);
     SR_ASSERT_NEAR(f.camera.target.z, center.z, 1e-5f);
@@ -206,4 +249,44 @@ SR_TEST(fit_returns_base_unchanged_for_a_sub_epsilon_bbox) {
     SR_ASSERT_NEAR(f.camera.target.z, 6.0f, 1e-6f);
     SR_ASSERT_NEAR(f.nearPlane, 0.1f, 1e-6f);
     SR_ASSERT_NEAR(f.farPlane, 100.0f, 1e-6f);
+}
+
+SR_TEST(fit_returns_base_unchanged_for_zero_fov) {
+    // fovY=0 ⇒ halfFov=0 ⇒ distance=r/0=inf ⇒ eye=inf。下游三道 fail-safe 全拦不住：
+    // normalize 的零守卫放行（l2=inf > 1e-16，vec.h:69）然后 inf*0=NaN；makeLookAt 的兜底
+    // 不触发（NaN < 1e-16 为假，transform.h:37）⇒ NaN 视图矩阵 ⇒ 整帧消失。
+    // fitCamera 是唯一拦截点（Ruling 49 的延伸：退化输入 ⇒ 不动作）。
+    const sr::OrbitCamera base = guardTestBase();
+    const sr::BBox bounds = cube(1.6f, sr::Vec3{0.0f, 0.0f, 0.0f});
+    const sr::FittedCamera f = sr::fitCamera(bounds, 0.0f, 16.0f / 9.0f, base);
+    assertBaseUntouchedAndRenderable(f, base, bounds);
+}
+
+SR_TEST(fit_returns_base_unchanged_for_zero_aspect) {
+    // aspect=0 ⇒ fovX=2*atan(tan(fovY/2)*0)=0 ⇒ halfFov=0 ⇒ distance=inf，与 fovY=0 同一条
+    // NaN 链。窗口最小 16x16 让今天不可达，但不可达 ≠ 无害：守卫挡的是整条链的入口。
+    const sr::OrbitCamera base = guardTestBase();
+    const sr::BBox bounds = cube(1.6f, sr::Vec3{0.0f, 0.0f, 0.0f});
+    const sr::FittedCamera f = sr::fitCamera(bounds, kFovY, 0.0f, base);
+    assertBaseUntouchedAndRenderable(f, base, bounds);
+}
+
+SR_TEST(fit_returns_base_unchanged_for_negative_aspect) {
+    // aspect<0 ⇒ fovX<0 ⇒ halfFov<0 ⇒ sin<0 ⇒ distance<0：eye 翻到 target 另一侧，
+    // 视角镜像、fit 距离为负无意义。这条不产生 NaN（view 有限），红的是 distance 等字段断言。
+    // 下面的投影检查抓不到它（实测）：投的点是 bounds.center() 即相机 target 本身，
+    // 永远在视轴上，w=|distance|>0、ndc≈(0,0,0.96)——字段断言是这条唯一的杀手。
+    const sr::OrbitCamera base = guardTestBase();
+    const sr::BBox bounds = cube(1.6f, sr::Vec3{0.0f, 0.0f, 0.0f});
+    const sr::FittedCamera f = sr::fitCamera(bounds, kFovY, -0.5f, base);
+    assertBaseUntouchedAndRenderable(f, base, bounds);
+}
+
+SR_TEST(fit_returns_base_unchanged_for_nan_fov) {
+    // fovY=NaN ⇒ tan/atan/sin 全 NaN ⇒ distance=NaN ⇒ eye=NaN。!(x>0.0f) 形式的守卫
+    // 顺带挡 NaN（照 makePerspective 的写法，transform.h:18）：NaN>0 为假 ⇒ 取反为真。
+    const sr::OrbitCamera base = guardTestBase();
+    const sr::BBox bounds = cube(1.6f, sr::Vec3{0.0f, 0.0f, 0.0f});
+    const sr::FittedCamera f = sr::fitCamera(bounds, std::nanf(""), 16.0f / 9.0f, base);
+    assertBaseUntouchedAndRenderable(f, base, bounds);
 }

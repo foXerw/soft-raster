@@ -26,6 +26,15 @@ struct FittedCamera {
 // 只改 distance / target / near / far；yaw 与 pitch 从 base 继承——按 F 的人不是为了被重置视角。
 // fit 只发生在调用方自己的相机里，model 保持单位阵，golden 的姿态常量（golden_scene.h）继续有效（D15）。
 inline FittedCamera fitCamera(const BBox& bounds, float fovYRadians, float aspect, const OrbitCamera& base) {
+    // 输入守卫（Ruling 49 的延伸：退化输入 ⇒ 不动作）。fovY=0 或 aspect=0 ⇒ halfFov=0 ⇒
+    // distance=inf ⇒ eye=inf，而下游三道 fail-safe 全拦不住：normalize 的零守卫放行
+    // （l2=inf > 1e-16，vec.h:69）后 inf*0=NaN；makeLookAt 的兜底不触发（NaN < 1e-16 为假，
+    // transform.h:37）⇒ NaN 视图矩阵 ⇒ 整帧消失。负 aspect ⇒ 负 distance，eye 翻到 target
+    // 另一侧、视角镜像。fovY=NaN 直接全链 NaN。这里是唯一拦截点；!(x > 0.0f) 形式顺带挡 NaN
+    // （照 makePerspective 的写法，transform.h:18）。对任何合法输入零行为变化。
+    if (!(fovYRadians > 0.0f) || !(aspect > 0.0f)) {
+        return FittedCamera{base};
+    }
     const float r = bounds.radius();
     // Ruling 49：退化输入的安全响应是**不动作**。r = 0 时公式给出 distance = near = far = 0，
     // 投影矩阵除以 (far - near) 会得到 NaN/inf ⇒ 整帧什么都画不出来（本项目的 makePerspective
@@ -41,6 +50,10 @@ inline FittedCamera fitCamera(const BBox& bounds, float fovYRadians, float aspec
     out.camera.distance = r / std::sin(halfFov);
     out.camera.target = bounds.center();
     out.nearPlane = r / 1000.0f;
+    // 已知限制：distance = r/sin(θ/2) 超过 far = r*10 当且仅当 sin(θ/2) < 0.1，
+    // 即 θ < 2*asin(0.1) ≈ 0.20033 rad ≈ 11.478°——fov 小于这个角时远角会被 far 裁掉。
+    // 今天 fov 恒 60° 不可达，不加 clamp（任何 clamp 都会为不可达输入改变 spec 钉死的合法输入行为）；
+    // fov 一旦成为可调参数就要补一条特征化测试。
     out.farPlane = r * 10.0f;
     return out;
 }
