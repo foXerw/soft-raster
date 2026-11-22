@@ -7,6 +7,16 @@
 
 namespace sr {
 
+// 应用的默认垂直 fov（P24：全仓库唯一的 60° 写法）。fitCamera 的输出只有在
+// "投影用的角 = fit 用的角"时才正确 —— 两处各写一份就会各自漂移，症状恰好是
+// "某些模型装不下"，把 fit 存在的全部理由掏空。所以 makePerspective 与 fitCamera
+// 必须取同一个常量（app 的 renderFrame 与 SceneState::refit 都从这里取）。
+// 数值保持 main.cpp 原表达式 60.0f*3.14159265f/180.0f 不变：它与 π/3 的 float 值
+// 逐位相同（0x3f860a92，两侧实测），无 --obj 的画面因此逐字节不动。
+// golden_scene.h 的 kGoldenFovYRadians = 1.047f 是**golden 常量**（D15）：数值相近
+// 但不相等，故意不统一 —— 动它会让 M3/M4 参考图漂移，那是"重构改变了一切"的反面。
+inline constexpr float kDefaultFovYRadians = 60.0f * 3.14159265f / 180.0f;
+
 // fit 的结果：相机 + 配套的近远平面。near/far 的默认值就是退化输入时退回的"调用方默认"。
 struct FittedCamera {
     OrbitCamera camera;
@@ -29,8 +39,9 @@ inline FittedCamera fitCamera(const BBox& bounds, float fovYRadians, float aspec
     // 输入守卫（Ruling 49 的延伸：退化输入 ⇒ 不动作）。fovY=0 或 aspect=0 ⇒ halfFov=0 ⇒
     // distance=inf ⇒ eye=inf，而下游三道 fail-safe 全拦不住：normalize 的零守卫放行
     // （l2=inf > 1e-16，vec.h:69）后 inf*0=NaN；makeLookAt 的兜底不触发（NaN < 1e-16 为假，
-    // transform.h:37）⇒ NaN 视图矩阵 ⇒ 整帧消失。负 aspect ⇒ 负 distance，eye 翻到 target
-    // 另一侧、视角镜像。fovY=NaN 直接全链 NaN。这里是唯一拦截点；!(x > 0.0f) 形式顺带挡 NaN
+    // transform.h:37）⇒ NaN 视图矩阵 ⇒ 整帧消失。负 aspect ⇒ 负 distance，eye 关于 target
+    // 点反射（视角转到背面；视图矩阵仍是正常旋转，图像并没有奇偶镜像）。fovY=NaN 直接全链 NaN。
+    // 这里是唯一拦截点；!(x > 0.0f) 形式顺带挡 NaN
     // （照 makePerspective 的写法，transform.h:18）。对任何合法输入零行为变化。
     if (!(fovYRadians > 0.0f) || !(aspect > 0.0f)) {
         return FittedCamera{base};

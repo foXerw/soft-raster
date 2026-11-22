@@ -9,10 +9,11 @@
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-// 精确 π/3 而不是 golden 的 1.047f：sin(π/6) = 0.5，期望值才是有限小数
-// （distance = 2r = 2.77128…）。1.047f 会给出 2.77176，与 brief 的数字对不上。
-constexpr float kFovY = kPi / 3.0f;
+// P24：改用全仓库唯一的 60° 写法（fit.h 的 kDefaultFovYRadians）。它与原本地的
+// kPi/3 逐位相同（0x3f860a92，两侧实测），所有期望值零数值变化。仍然不是 golden 的
+// 1.047f：sin(π/6) = 0.5，期望值才是有限小数（distance = 2r = 2.77128…）；
+// 1.047f 会给出 2.77176，与 brief 的数字对不上。
+constexpr float kFovY = sr::kDefaultFovYRadians;
 
 sr::BBox cube(float size, const sr::Vec3& center) {
     const float h = size * 0.5f;
@@ -272,10 +273,13 @@ SR_TEST(fit_returns_base_unchanged_for_zero_aspect) {
 }
 
 SR_TEST(fit_returns_base_unchanged_for_negative_aspect) {
-    // aspect<0 ⇒ fovX<0 ⇒ halfFov<0 ⇒ sin<0 ⇒ distance<0：eye 翻到 target 另一侧，
-    // 视角镜像、fit 距离为负无意义。这条不产生 NaN（view 有限），红的是 distance 等字段断言。
+    // aspect<0 ⇒ fovX<0 ⇒ halfFov<0 ⇒ sin<0 ⇒ distance<0：eye 关于 target 点反射
+    // （视角转到背面；视图矩阵仍是正常旋转 det +1，图像并没有奇偶镜像），fit 距离为负无意义。
+    // 这条不产生 NaN（view 有限），红的是 distance 等字段断言。
     // 下面的投影检查抓不到它（实测）：投的点是 bounds.center() 即相机 target 本身，
-    // 永远在视轴上，w=|distance|>0、ndc≈(0,0,0.96)——字段断言是这条唯一的杀手。
+    // 永远在视轴上，w=|distance|>0、ndc≈(0,0,0.9996)——字段断言是这条唯一的杀手。
+    // （P25 更正：旧注释的 0.96 是拿默认 near/far 0.1/100 算的；无守卫的 fit 会把
+    // near/far 改写成 r/1000 与 10r，z_ndc 因此贴近 1 而不是 0.96。）
     const sr::OrbitCamera base = guardTestBase();
     const sr::BBox bounds = cube(1.6f, sr::Vec3{0.0f, 0.0f, 0.0f});
     const sr::FittedCamera f = sr::fitCamera(bounds, kFovY, -0.5f, base);
