@@ -514,7 +514,7 @@ SR_TEST(srgb_file_texture_and_linear_kd_land_on_the_same_brightness_as_a_white_t
 **Files:**
 - Create: `src/scene/fit.h`（纯 header）
 - Create: `tests/unit/test_fit.cpp`
-- Modify: `src/math/mat.h` 或 `transform.h`（若**没有**现成的 `Vec4 operator*(Mat4, Vec4)`，本任务加一个；`makePerspective` 已有）
+- 无需改 math：`Mat4::operator*(const Vec4&)` 已在 `src/math/mat.h:34,96`，`makePerspective` 产出的 NDC z ∈ [-1,1] 已在 `src/math/transform.h:11` 写明（预检核实）
 
 **Interfaces:**
 - Consumes: `BBox`（`math/bbox.h:12-34`，`center()`/`radius()` 已处理空盒）、`OrbitCamera`（`scene/camera.h:17-22`，有 `target`）、`makeLookAt`/`makePerspective`。
