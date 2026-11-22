@@ -12,7 +12,7 @@
 |---|---|
 | 生成 flag | `soft-raster --emit-checker-tga <path>`（独立入口、无默认值，Ruling 38） |
 | 生成函数 | `sr::makeCheckerImage(kGoldenCheckerCells=4, kGoldenCheckerCellPx=32, {})` → `sr::writeTga`（`src/loader/tga_writer.cpp`） |
-| 生成提交 | M5.3 的 feat 提交（`feat(loader): …（M5.3）`，BASE `0045778`；精确 SHA 由紧随的 docs 提交补记） |
+| 生成提交 | `8b3c11a`（`feat(loader): …（M5.3）`，BASE `0045778`） |
 | 格式 | 未压缩 type 2、32bpp、18 字节头、**bottom-up（descriptor bit5 = 0）**、alpha 第 4 字节 |
 | 字节数 | 65,554（18 + 128×128×4） |
 | SHA-256 | `fba10df24aed389d6022de2843a66f26768d146633953ea4ea66eec28166b2de` |
@@ -52,5 +52,5 @@ sha256sum assets/tga/checker.tga   # 应等于上表那串
 
 ## 生成提交
 
-- SHA：`（待补记）`
+- SHA：`8b3c11a`（feat/m5-obj 分支；资产与生成它的代码同提交入库）
 - 复核：`git log --follow -- assets/tga/checker.tga` 的第一条即生成提交。
