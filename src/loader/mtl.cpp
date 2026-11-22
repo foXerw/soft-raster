@@ -1,37 +1,15 @@
 #include "loader/mtl.h"
 
-#include <charconv>
-#include <cmath>
 #include <utility>
+
+#include "loader/lex.h"
 
 namespace sr {
 namespace {
 
-// 整个 token 必须是一个有限数字才算成功：from_chars 不跳前导空白、不吃尾随垃圾，
-// r.ptr != last 就把 "0.5abc" 这种挡掉。非有限值（inf/nan）也拒绝 —— 一个 NaN 的 opacity
-// 会在 M6 安静地长出来（Ruling 52 担心的那类延迟故障），不如在解析时就当坏参数报错。
-bool parseFloat(std::string_view tok, float& v) {
-    if (tok.empty()) return false;
-    const char* first = tok.data();
-    const char* last = first + tok.size();
-    const auto r = std::from_chars(first, last, v, std::chars_format::general);
-    if (r.ec != std::errc{} || r.ptr != last) return false;
-    return std::isfinite(v);
-}
-
-// 按空格/tab 切 token。行内的 \r\n 已在行切分阶段处理掉。
-std::vector<std::string_view> tokenize(std::string_view line) {
-    std::vector<std::string_view> t;
-    size_t i = 0;
-    while (i < line.size()) {
-        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
-        if (i >= line.size()) break;
-        const size_t start = i;
-        while (i < line.size() && line[i] != ' ' && line[i] != '\t') ++i;
-        t.push_back(line.substr(start, i - start));
-    }
-    return t;
-}
+// 词法层与 obj.cpp 共用一份（loader/lex.h，提炼理由见该文件头部引的 test_util.h 教训）。
+using lex::parseFloat;
+using lex::tokenize;
 
 bool startsWithDigit(std::string_view tok) {
     return !tok.empty() && tok[0] >= '0' && tok[0] <= '9';
@@ -89,27 +67,13 @@ bool parseMtl(std::string_view text, std::vector<Material>& out,
     };
     auto lineTag = [](int n) { return "第 " + std::to_string(n) + " 行: "; };
 
-    // UTF-8 BOM 剥掉，否则它会被当成第一行的未知指令（与 OBJ 侧 M5.2 同一种容忍）。
-    size_t pos = 0;
-    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
-        static_cast<unsigned char>(text[1]) == 0xBB &&
-        static_cast<unsigned char>(text[2]) == 0xBF)
-        pos = 3;
-
+    // UTF-8 BOM 剥掉 + 行切分容忍 CRLF/裸 CR：与 OBJ 侧共用同一份词法（lex.h），
+    // 两个解析器对畸形输入的容忍由"同一份代码"保证同构。
+    size_t pos = lex::skipBom(text);
     int lineNo = 0;
     while (pos < text.size()) {
-        // 行切分容忍 CRLF 与裸 CR：\r\n 算一个行尾，单独的 \r 或 \n 也算。
-        size_t end = pos;
-        while (end < text.size() && text[end] != '\n' && text[end] != '\r') ++end;
-        std::string_view line = text.substr(pos, end - pos);
+        std::string_view line = lex::nextLine(text, pos);
         ++lineNo;
-        if (end < text.size()) {
-            if (text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n')
-                end += 2;
-            else
-                end += 1;
-        }
-        pos = end;
 
         // '#' 起是注释；空行/纯注释跳过。
         const size_t hash = line.find('#');

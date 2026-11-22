@@ -638,6 +638,80 @@ SR_TEST(obj_reports_the_line_number_of_a_bad_number) {
     SR_ASSERT(badIdx.err.find("z") != std::string::npos);
 }
 
+SR_TEST(obj_negative_vt_vn_indices_resolve_against_their_own_table_lengths) {
+    // OBJ 经典错法：把 v/vt/vn 三个负索引**都**拿 v 的表长去解。判别夹具让两表长度不同，
+    // 使"按自己的表长解"与"按 v 的表长解"给出**不同结果**。每条注释写明两种预期。
+    // 这里刻意选"错解仍落在 vt/vn 表内"的长度组合 ⇒ 变异下得到的是**断言级红**而不是
+    // 越界读引发的进程 abort（MSVC Debug STL 会对 vector 越界下标直接 abort）；
+    // 落在 (len(vt), len(v)] 间隙、错解必然越界读的夹具放在下一条 rejects 用例里。
+
+    // 负 vt，len(v)=4 > len(vt)=2，"f 1/-3 2 3"：
+    //   正确：-3 按 vt 自己的长度 2 解 ⇒ -3+2 = -1 ⇒ 越界**拒绝**；
+    //   错用 v 的长度 4：-3+4 = 1 ⇒ vtTable[1] 合法（表长 2）⇒ 错误地**接受**。
+    //   两种预期 false vs true ⇒ 本条抓住该错法，且错解不越界 ⇒ 断言级红。
+    const ObjResult vtNeg = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\n"
+        "vt 0 0\nvt 1 1\n"
+        "f 1/-3 2 3\n");
+    SR_ASSERT_FALSE(vtNeg.ok);
+    SR_ASSERT(vtNeg.out.mesh.indices.empty());
+    SR_ASSERT(vtNeg.err.find("第 7 行") != std::string::npos);   // 4 个 v + 2 个 vt ⇒ f 在第 7 行
+
+    // 负 vn 同构：len(v)=4 > len(vn)=2，"f 1//-3 2 3" ⇒ 正确拒绝（-3+2=-1），错用 v 长接受。
+    const ObjResult vnNeg = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\n"
+        "vn 0 0 1\nvn 1 0 0\n"
+        "f 1//-3 2 3\n");
+    SR_ASSERT_FALSE(vnNeg.ok);
+    SR_ASSERT(vnNeg.out.mesh.indices.empty());
+
+    // 反方向（错界**过小**会误拒）：len(v)=3 < len(vt)=5，"f 1/5 2 3"：
+    //   正确：vt5 存在（idx 4 < 5）⇒ **接受**；错用 v 的长度 3：idx 4 ≥ 3 ⇒ 错误地**拒绝**。
+    //   这条与上一条一起把"vt 的界恰好是 vtTable.size()"两个方向都钉死。
+    const ObjResult vtBig = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+        "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvt 0.75 0.25\n"
+        "f 1/5 2 3\n");
+    SR_ASSERT(vtBig.ok);
+    if (vtBig.out.mesh.uvs.size() == 3) {
+        SR_ASSERT_NEAR(vtBig.out.mesh.uvs[0].x, 0.75f, 1e-5f);   // vt5 翻转后 (0.75, 0.75)
+        SR_ASSERT_NEAR(vtBig.out.mesh.uvs[0].y, 0.75f, 1e-5f);
+    }
+    // vn 反方向：len(v)=3 < len(vn)=5，"f 1//5 2 3" ⇒ 正确接受，法线取 vn5=(0,1,0)。
+    const ObjResult vnBig = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+        "vn 0 0 1\nvn 1 0 0\nvn 0 0 -1\nvn -1 0 0\nvn 0 1 0\n"
+        "f 1//5 2 3\n");
+    SR_ASSERT(vnBig.ok);
+    if (vnBig.out.mesh.normals.size() == 3) {
+        SR_ASSERT_NEAR(vnBig.out.mesh.normals[0].y, 1.0f, 1e-5f);   // 角 1 保留声明的 vn5
+        SR_ASSERT_NEAR(vnBig.out.mesh.normals[0].x, 0.0f, 1e-5f);
+    }
+
+    // 正控制（负索引在自身表内合法，必须解对、不能过度拒绝）：len(v)=3 > len(vt)=2，
+    // "f 1/-2 2 3"：正确 -2+2=0 ⇒ vt1=(0,0) ⇒ uv (0,1)；错用 v 长 -2+3=1 ⇒ vt2=(1,1) ⇒ uv (1,0)。
+    // 两种结果都合法但**值不同** ⇒ 用 uv 值判别（错解不越界，断言级红）。
+    const ObjResult vtCtl = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+        "vt 0 0\nvt 1 1\n"
+        "f 1/-2 2 3\n");
+    SR_ASSERT(vtCtl.ok);
+    if (vtCtl.out.mesh.uvs.size() == 3) {
+        SR_ASSERT_NEAR(vtCtl.out.mesh.uvs[0].x, 0.0f, 1e-5f);   // 必须是 vt1 不是 vt2
+        SR_ASSERT_NEAR(vtCtl.out.mesh.uvs[0].y, 1.0f, 1e-5f);
+    }
+    // vn 正控制：len(v)=3 > len(vn)=2，"f 1//-2 2 3" ⇒ 正确取 vn1=(0,0,1)，错取 vn2=(1,0,0)。
+    const ObjResult vnCtl = parse(
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\n"
+        "vn 0 0 1\nvn 1 0 0\n"
+        "f 1//-2 2 3\n");
+    SR_ASSERT(vnCtl.ok);
+    if (vnCtl.out.mesh.normals.size() == 3) {
+        SR_ASSERT_NEAR(vnCtl.out.mesh.normals[0].z, 1.0f, 1e-5f);   // vn1
+        SR_ASSERT_NEAR(vnCtl.out.mesh.normals[0].x, 0.0f, 1e-5f);
+    }
+}
+
 SR_TEST(obj_rejects_out_of_range_index_with_a_message) {
     // **这条最关键，是内存安全守卫不是格式洁癖**：render_backend.cpp:115 的
     // `in.position = mesh.positions[idx]` **没有**边界保护；normals/uvs/colors 各自有
@@ -679,6 +753,23 @@ SR_TEST(obj_rejects_out_of_range_index_with_a_message) {
     const ObjResult extreme = parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nf -9223372036854775808 1 2\n");
     SR_ASSERT_FALSE(extreme.ok);
     SR_ASSERT(extreme.out.mesh.indices.empty());
+
+    // 差集夹具（评审 Important 1）：索引落在 (len(vt), len(v)] 间隙 —— 对 v 合法、对 vt 越界。
+    // len(v)=3、len(vt)=1，"f 1/2 2 3"：正确 ⇒ vt 索引 2 越界拒绝；若错用 positions.size()=3
+    // 校验 ⇒ 索引 2 "合法" ⇒ vtTable[1] 越界读（MSVC Debug STL 会就此 abort —— 那正是内存安全
+    // 缺陷本身）。断言级的双向判别由上一条 negative_..._own_table_lengths 用例给出（错解不越界）。
+    const ObjResult vtGap = parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nf 1/2 2 3\n");
+    SR_ASSERT_FALSE(vtGap.ok);
+    SR_ASSERT(vtGap.out.mesh.indices.empty());
+    SR_ASSERT(vtGap.err.find("第 5 行") != std::string::npos);
+    SR_ASSERT(vtGap.err.find("vt") != std::string::npos);
+
+    // vn 侧同构：len(v)=3、len(vn)=1，"f 1//2 2 3" ⇒ 索引 2 对 v 合法、对 vn 越界。
+    const ObjResult vnGap = parse("v 0 0 0\nv 1 0 0\nv 0 1 0\nvn 0 0 1\nf 1//2 2 3\n");
+    SR_ASSERT_FALSE(vnGap.ok);
+    SR_ASSERT(vnGap.out.mesh.indices.empty());
+    SR_ASSERT(vnGap.err.find("第 5 行") != std::string::npos);
+    SR_ASSERT(vnGap.err.find("vn") != std::string::npos);
 }
 
 // ---- scanObjMtllib（M5.4 消费它决定"该读哪个 .mtl"）------------------------

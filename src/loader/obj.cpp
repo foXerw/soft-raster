@@ -1,71 +1,28 @@
 #include "loader/obj.h"
 
 #include <charconv>
-#include <cmath>
 #include <unordered_map>
 #include <utility>
 
+#include "loader/lex.h"
 #include "math/vec.h"
 
 namespace sr {
 namespace {
 
-// 与 mtl.cpp 的 parseFloat 同一规则：整个 token 必须是一个有限数字才算成功。
-// from_chars 不跳前导空白、不吃尾随垃圾（"0.5abc" 挡掉）；inf/nan 也拒绝。
-bool parseFloat(std::string_view tok, float& v) {
-    if (tok.empty()) return false;
-    const char* first = tok.data();
-    const char* last = first + tok.size();
-    const auto r = std::from_chars(first, last, v, std::chars_format::general);
-    if (r.ec != std::errc{} || r.ptr != last) return false;
-    return std::isfinite(v);
-}
+// 词法层与 mtl.cpp 共用一份（loader/lex.h，提炼理由见该文件头部引的 test_util.h 教训）。
+using lex::parseFloat;
+using lex::tokenize;
+using lex::nextLine;
+using lex::skipBom;
 
-// OBJ 的索引必须是**非零整数**（"1.0" 这种浮点写法不是合法索引）。
+// OBJ 的索引必须是**非零整数**（"1.0" 这种浮点写法不是合法索引）。OBJ 专属，不在共享词法里。
 bool parseInt(std::string_view tok, int64_t& v) {
     if (tok.empty()) return false;
     const char* first = tok.data();
     const char* last = first + tok.size();
     const auto r = std::from_chars(first, last, v);
     return r.ec == std::errc{} && r.ptr == last;
-}
-
-// 按空格/tab 切 token（与 mtl.cpp 同一写法）。
-std::vector<std::string_view> tokenize(std::string_view line) {
-    std::vector<std::string_view> t;
-    size_t i = 0;
-    while (i < line.size()) {
-        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
-        if (i >= line.size()) break;
-        const size_t start = i;
-        while (i < line.size() && line[i] != ' ' && line[i] != '\t') ++i;
-        t.push_back(line.substr(start, i - start));
-    }
-    return t;
-}
-
-// 行切分容忍 CRLF 与裸 CR（与 mtl.cpp 同一写法）：\r\n 算一个行尾，单独的 \r 或 \n 也算。
-// Windows 导出器写 CRLF，老 Mac 写裸 CR。
-std::string_view nextLine(std::string_view text, size_t& cursor) {
-    size_t end = cursor;
-    while (end < text.size() && text[end] != '\n' && text[end] != '\r') ++end;
-    const std::string_view line = text.substr(cursor, end - cursor);
-    if (end < text.size()) {
-        if (text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n')
-            end += 2;
-        else
-            end += 1;
-    }
-    cursor = end;
-    return line;
-}
-
-// UTF-8 BOM 剥掉，否则它会被当成第一行的未知指令（Blender/某些导出器会写 BOM）。
-size_t skipBom(std::string_view text) {
-    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
-        static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF)
-        return 3;
-    return 0;
 }
 
 // D7 去重键：解析后的 (v, vt, vn) 三元组，缺项用 -1 哨兵。三个 int64 打包成一个键，
