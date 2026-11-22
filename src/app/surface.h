@@ -44,7 +44,8 @@ class Surface {
 
 std::unique_ptr<Surface> createOffscreenSurface(int width, int height);
 
-// title 用 wstring：窗口标题里有中文是常见需求，而 argv 是 UTF-8，转换只发生在这一个入口。
+// title 用 wstring：窗口标题里有中文是常见需求，标题本身是宽字符字面量（kWindowTitle）。
+// argv 的编码转换不在这里：M5.6 起统一在 app/path（utf8FromWide / nativePath，D18）。
 std::unique_ptr<Surface> createWindowSurface(int width, int height, const std::wstring& title,
                                              std::string& err);
 

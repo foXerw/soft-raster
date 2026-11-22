@@ -3,7 +3,7 @@
 // M5.3 评审 Important 2 收进跨 TU 的路径→可显示字符串 displayPath）。
 // header-only，随 includer 进 soft_raster_core / soft_raster_loader，不新增编译单元、
 // 不进 CMake 源文件列表。**不是公共 API**：给 src/loader 的 .cpp 与 app 侧需要
-// displayPath 的 TU（M5.6 起：scene.cpp，Ruling 62 要求消息里的路径一律走它）
+// displayPath 的 TU（M5.6 起：scene.cpp / main.cpp，Ruling 62 要求消息里的路径一律走它）
 // include；tests 不直接 include（断言用字符串 find，不依赖这层帮手）。
 //
 // 为什么共用一份而不是各写各的：tests/unit/test_util.h:16 已经写过这条教训 ——

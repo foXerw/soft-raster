@@ -25,6 +25,15 @@ bool hasObjExtension(const std::filesystem::path& p) {
 
 }  // namespace
 
+const sr::Mesh& fallbackCube() {
+    static const sr::Mesh cube = [] {
+        sr::Mesh m = sr::makeCube(1.6f, true);
+        sr::applyPositionColors(m);   // M3：位置编码色，插值不连续就看得见
+        return m;
+    }();
+    return cube;
+}
+
 bool SceneState::load(const std::filesystem::path& obj) {
     requested = obj;   // R 重载"同一个 path"；失败后也能重试（修好文件再按 R）
     if (!hasObjExtension(obj)) {

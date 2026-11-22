@@ -15,8 +15,14 @@
 
 #include "loader/model.h"
 #include "scene/camera.h"
+#include "scene/mesh.h"
 
 namespace app {
+
+// 程序生成的兜底立方体（model == nullptr 时的 M2–M4 老画面）。进程内单例，与
+// goldenCheckerTexture 同一条纪律：窗口里看到的兜底模型与测试里断言的是同一个对象。
+// makeCube/applyPositionColors 都是 core，本 TU 仍不含 Win32。
+const sr::Mesh& fallbackCube();
 
 struct SceneState {
     std::unique_ptr<sr::LoadedModel> model;   // nullptr = 画程序生成的立方体（M2–M4 的老画面）

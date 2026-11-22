@@ -6,8 +6,12 @@ namespace app {
 
 // 命令行选项。这个文件**不允许**包含任何 Win32 头（C4 的例外处理见计划 Task 0.6 Step 1）：
 // 它是纯字符串解析，因此可以被测试目标直接链接并逐个 flag 断言。
+// **所有路径字段都是 UTF-8 语义**（D18）：main 开头用 GetCommandLineW + CommandLineToArgvW
+// 把 argv 统一成 UTF-8 再喂进来（Git Bash/MSYS2 传 UTF-8，而 MSVC CRT 的窄 argv 按 ANSI
+// 码页转，中文会 mojibake）。本文件与它的测试一行不改 —— 它们喂的一直是 ASCII。
+// 消费侧用 app::nativePath（全仓库唯一的 UTF-8→path 转换点）转成原生路径。
 struct AppOptions {
-    std::string obj;      // OBJ 路径；空 = 用程序生成的模型
+    std::string obj;      // OBJ 路径（UTF-8，见上）；空 = 用程序生成的模型
     std::string out;      // 离屏模式下写出的 BMP 路径
     std::string backend = "a";   // "a" 标量 / "b" tile+多线程
     int width = 1280;

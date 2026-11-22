@@ -1,7 +1,10 @@
 #include "app/win32_window.h"
 
 #include <cstdio>
+#include <shellapi.h>   // DragAcceptFiles / DragQueryFileW / DragFinish（WIN32_LEAN_AND_MEAN 不带它）
 #include <windowsx.h>  // GET_X_LPARAM / GET_Y_LPARAM
+
+#include "app/path.h"   // utf8FromWide：拖放路径 UTF-16 → UTF-8（D18）
 
 namespace app {
 
@@ -71,6 +74,10 @@ bool Window::create(int width, int height, const std::wstring& title, std::strin
         destroy();
         return false;
     }
+
+    // 拖放 .obj 载入（M5.6）：接受 shell 的 WM_DROPFILES。后缀守卫不在这里 ——
+    // 这里只管"shell 给了个路径字符串"，是不是 .obj 由 SceneState::load 判（A4）。
+    DragAcceptFiles(hwnd, TRUE);
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -195,6 +202,22 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                              static_cast<float>(WHEEL_DELTA);
             }
             return 0;
+        case WM_DROPFILES: {
+            // 拖放（M5.6）：只取第一个文件（模型槽只有一个，多文件拖放取首个）。
+            // 路径是 UTF-16，转成 UTF-8 写进本帧快照；main 再经 nativePath 走与
+            // --obj 完全相同的 SceneState::load（D18：转换点唯一）。非 .obj 由
+            // load 的后缀守卫写 errorLine，不静默忽略（A4）。
+            HDROP drop = reinterpret_cast<HDROP>(wp);
+            const UINT len = DragQueryFileW(drop, 0, nullptr, 0);   // 0 缓冲 ⇒ 返回所需长度
+            if (len > 0 && in != nullptr) {
+                std::wstring wide(static_cast<size_t>(len) + 1, L'\0');   // +1 给结尾 null
+                DragQueryFileW(drop, 0, wide.data(), len + 1);
+                wide.resize(len);
+                in->droppedObj = utf8FromWide(wide);
+            }
+            DragFinish(drop);   // 无论有没有归属帧都要释放 shell 的内存
+            return 0;
+        }
         case WM_KEYDOWN:
             switch (wp) {
                 case VK_ESCAPE: m_shouldClose = true; break;
@@ -208,6 +231,7 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     case 'V': in->cycleView = true; break;
                     case 'W': in->toggleWireframe = true; break;
                     case 'R': in->reloadModel = true; break;
+                    case 'F': in->refit = true; break;
                     // 数字这一排：虚拟键码 VK_1 / VK_2 的字面值就是 ASCII '1' / '2'（0x31 / 0x32），
                     // 所以与上面的字母同族。（本机 SDK 的 winnt.h 在 WINVER < WIN10 时**不定义**
                     // VK_0..VK_9 —— 写 VK_1 会得到 C2065，症状像"这个键不存在"，其实只是宏没开。）

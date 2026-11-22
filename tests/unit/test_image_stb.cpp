@@ -164,7 +164,8 @@ SR_TEST(stb_loads_a_png_from_a_chinese_named_directory) {
         return;
     }
     // 先用生产 writeBmp 写到 ASCII 路径，再把字节搬进中文目录：
-    // writeBmp 收窄字符串（MSVC 下 ANSI），搬运用 ofstream(fs::path) 的宽字符重载。
+    // writeBmp 收 fs::path（M5.6 起，D12 写侧对称），本用例传的 ASCII 窄串隐式转换无损；
+    // 搬运用 ofstream(fs::path) 的宽字符重载。
     std::string err;
     writeRedBlueBmp("sr_tmp_bmp/m5_stb_cn_src.bmp", err);
     SR_ASSERT(err.empty());

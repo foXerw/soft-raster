@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <string>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -17,12 +16,16 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>   // CommandLineToArgvW（WIN32_LEAN_AND_MEAN 不带它）
 
 #include "app/cmdline.h"
 #include "app/input.h"
+#include "app/path.h"
+#include "app/scene.h"
 #include "app/surface.h"
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
+#include "loader/lex.h"   // displayPath（Ruling 62：消息里的路径不用 .string()）
 #include "loader/tga_writer.h"
 #include "math/transform.h"
 #include "render/builtin_shaders.h"
@@ -34,6 +37,7 @@
 #include "render/patterns.h"
 #include "scene/golden_scene.h"
 #include "scene/camera.h"
+#include "scene/fit.h"   // kDefaultFovYRadians（P24：投影与 fit 同一个角）
 #include "scene/mesh.h"
 #include "render/raster_scalar.h"
 #include "render/render_target.h"
@@ -86,8 +90,10 @@ sr::FilterMode nextFilter(sr::FilterMode f) {
 constexpr float kTurntableRadiansPerSecond = 0.6f;
 constexpr int kTargetFps = 60;
 
+// 渲染一整帧。M5.6 起画面内容由 SceneState 决定：model == nullptr ⇒ 程序生成的
+// 立方体（M2–M4 的老画面，逐字节不变是这条分支的回归证据）；非空 ⇒ drawModel 逐组提交。
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
-                 const sr::OrbitCamera& camera) {
+                 const app::SceneState& scene) {
     target.depth.clear();
     // 背景从"全屏渐变填充"换成纯色 clear。
     // 渐变是 M0 的验收物（当时除了它没有别的东西可画），但它每帧要做 width*height 次
@@ -102,17 +108,25 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         target.color.clear(sr::encodeSRGB({0.045f, 0.05f, 0.07f}));
     }
 
-    // M2 的可见成果：一个 MVP 变换的旋转立方体，面纯色，**故意不启用深度**。
-    // 剔除开着时它是干净的（凸体 + 剔除已经解决了遮挡）；把 cull 关掉就能看到
-    // 背面透出来盖住正面 —— 那是 painter's 算法的缺陷，也是 M3 的动机。
-    {
-        static sr::BackendA backend;
-        static sr::Mesh cube = [] {
-            sr::Mesh m = sr::makeCube(1.6f, true);
-            sr::applyPositionColors(m);   // M3：位置编码色，插值不连续就看得见
-            return m;
-        }();
+    sr::FrameStats stats;
+    static sr::BackendA backend;
+    sr::VertexUniforms vu;
+    // 物体不自转：旋转交给轨道相机，鼠标拖拽直接改变 yaw/pitch。
+    // "转相机"与"转物体"在画面上等价，但只有前者能让用户觉得自己抓住了物体。
+    vu.model = sr::Mat4::identity();
+    vu.view = scene.camera.view();
+    // near/far 来自 SceneState（fit 写入），不再硬编码 0.1/100；fov 与 SceneState::refit
+    // 取**同一个常量**（P24：fit 用的角与投影用的角漂移，症状是"某些模型装不下"）。
+    vu.proj = sr::makePerspective(sr::kDefaultFovYRadians,
+                                  static_cast<float>(target.color.width) /
+                                      static_cast<float>(target.color.height),
+                                  scene.nearPlane, scene.farPlane);
+    vu.normalMatrix = sr::Mat4::identity();   // model 是单位阵，法线矩阵也就是单位阵
 
+    if (scene.model == nullptr) {
+        // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——
+        // 无 --obj 的离屏图与 M4 golden 是它的回归证据。立方体本体在 scene.cpp
+        // （fallbackCube 单例）：renderFrame 只负责画，不持有场景内容。
         sr::PipelineState st;
         st.target = &target;
         st.vertexShader = sr::transformVS;
@@ -129,22 +143,29 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // 这不是偷懒，是让"我在窗口里验收过的画面"与"golden 守住的画面"是同一个东西 ——
         // 两者各自建一张图时，改了一边的参数不会让另一边变红。
         st.fu.texture = &sr::goldenCheckerTexture();
+        // ClampEdge 是"每面一整张贴图"的特例语义（Ruling 37），**只属于这个立方体**；
+        // 导入模型走下面的 Repeat。理由见 golden_scene.cpp 的 goldenSampler()。
         st.fu.sampler.wrapU = sr::WrapMode::ClampEdge;
-        st.fu.sampler.wrapV = sr::WrapMode::ClampEdge;   // 理由见 golden_scene.cpp 的 goldenSampler()
+        st.fu.sampler.wrapV = sr::WrapMode::ClampEdge;
         st.fu.sampler.filter = g_filter;
         st.fu.sampler.useMip = g_useMip;
-
-
-        // 物体不再自转：旋转交给轨道相机，鼠标拖拽直接改变 yaw/pitch。
-        // "转相机"与"转物体"在画面上等价，但只有前者能让用户觉得自己抓住了物体。
-        st.vu.model = sr::Mat4::identity();
-        st.vu.view = camera.view();
-        st.vu.proj = sr::makePerspective(60.0f * 3.14159265f / 180.0f,
-                                         static_cast<float>(target.color.width) /
-                                             static_cast<float>(target.color.height),
-                                         0.1f, 100.0f);
-        st.vu.normalMatrix = sr::Mat4::identity();   // model 是单位阵，法线矩阵也就是单位阵
-        backend.draw(cube, st);
+        st.vu = vu;
+        st.stats = &stats;
+        backend.draw(app::fallbackCube(), st);
+    } else {
+        // 导入模型（M5.4 drawModel）：逐组一次 drawRange，Kd/贴图按组覆写。
+        sr::FragmentUniforms base;
+        base.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};   // drawModel 按组覆写成线性 Kd
+        // 导入模型用 **Repeat**：外部模型的 uv 常越界（平铺语义）。ClampEdge 是
+        // "每面一整张贴图"的特例语义（Ruling 37），只属于上面的 golden 立方体 ——
+        // 两条路径的 wrap 不同是故意的，不是漏改。
+        base.sampler.wrapU = sr::WrapMode::Repeat;
+        base.sampler.wrapV = sr::WrapMode::Repeat;
+        // `1`/`2` 两个旋钮对导入模型同样生效：传活的应用状态，别在导入路径上
+        // 重新发明第二条采样状态路径（M4 旋钮的自然延伸）。
+        base.sampler.filter = g_filter;
+        base.sampler.useMip = g_useMip;
+        sr::drawModel(backend, *scene.model, target, vu, base, &stats);
     }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
@@ -155,12 +176,29 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     g_sink.present(target);
 
     sr::drawText(target.color, 4, 4, statusLine, fg, bg, 2);
-    sr::drawText(target.color, 4, 4 + 2 * sr::kGlyphHeightPx + 4,
-                 "P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT ESC=QUIT",
-                 sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
+    // 第二行：errorLine 非空 ⇒ **整行给错误**，持续到下次成功载入（"该看到什么必须
+    // always 在画面上"）。否则 = 模型标签 + DC/UNRECOGNIZED 计数 + 按键提示。
+    // drawText 越界静默丢弃（render_target.h），长错误行在右缘截断，不会写坏内存。
+    // 已知限制：位图字体只有 ASCII 字形，错误消息里的中文会画成方块 —— 路径与数字
+    // 仍可读，完整 UTF-8 消息在终端（glyphFor 的"缺字必须看得见"约定）。
+    const int line2Y = 4 + 2 * sr::kGlyphHeightPx + 4;
+    if (!scene.errorLine.empty()) {
+        sr::drawText(target.color, 4, line2Y, scene.errorLine,
+                     sr::encodeSRGB({1.0f, 0.4f, 0.35f}), bg, 1);
+    } else {
+        char line2[256];
+        const int unrecognized = scene.model ? scene.model->stats.unrecognized : 0;
+        std::snprintf(line2, sizeof(line2),
+                      "%s  DC %lld  UNRECOGNIZED %d  P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT R=RELOAD F=FIT ESC=QUIT",
+                      scene.modelLabel.c_str(), static_cast<long long>(stats.drawCalls),
+                      unrecognized);
+        sr::drawText(target.color, 4, line2Y, line2,
+                     sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
+    }
 }
 
-int saveScreenshot(const sr::RenderTarget& target, const std::string& path, std::string& err) {
+int saveScreenshot(const sr::RenderTarget& target, const std::filesystem::path& path,
+                   std::string& err) {
     // writeBmp 需要一个非常量的 ColorTarget（视图对象本身是值语义，不修改它），
     // 所以这里拷贝一份视图而不是 const_cast。
     sr::ColorTarget copy = target.color;
@@ -168,29 +206,57 @@ int saveScreenshot(const sr::RenderTarget& target, const std::string& path, std:
         std::printf("[screenshot] 失败: %s\n", err.c_str());
         return 1;
     }
-    std::printf("[screenshot] 已写出 %s (%dx%d)\n", path.c_str(), copy.width, copy.height);
+    std::printf("[screenshot] 已写出 %s (%dx%d)\n", sr::lex::displayPath(path).c_str(),
+                copy.width, copy.height);
     return 0;
 }
 
 // 两个 golden 入口共用"建离屏面 → 渲一帧 → 存图"这一段，唯一区别是**调用哪个场景函数**。
 // 场景函数以指针传入而不是复制两份：参考图必须由生产代码里的那一个函数生成，
 // 而"哪个函数生成了它"要能从打印出来的标签里读出来（标签与函数搞错的代价是一整帧白比对）。
-int writeGolden(const std::string& label, const std::string& path,
+int writeGolden(const std::string& label, const std::filesystem::path& path,
                 void (*scene)(sr::RenderTarget&, sr::FrameStats*)) {
     auto surface = app::createOffscreenSurface(sr::kGoldenWidth, sr::kGoldenHeight);
     sr::FrameStats stats;
     scene(surface->target(), &stats);
     std::string err;
     if (saveScreenshot(surface->target(), path, err) != 0) return 1;
-    const std::string line = "[golden] " + label + " → " + path + " 由 " + sr::buildInfoString();
+    const std::string line =
+        "[golden] " + label + " → " + sr::lex::displayPath(path) + " 由 " + sr::buildInfoString();
     std::puts(line.c_str());
     return 0;
+}
+
+// --obj / R / 拖放共用的载入入口（M5.6）。失败 ⇒ 打印 + HUD 错误行，旧画面（首载时
+// 是兜底立方体）原样保留，**程序继续跑** —— 不是退出：看不见模型比看见错误更糟。
+// 成功 ⇒ 打印计数，按 fitEnabled 自动 refit（--no-fit 时不自动；F 键仍可手动）。
+void loadObjIntoScene(app::SceneState& scene, const std::filesystem::path& objPath, int width,
+                      int height) {
+    if (scene.load(objPath)) {
+        const sr::LoadedModel& m = *scene.model;
+        std::printf("[obj] 已载入 %s: %d 三角形 / %zu 组 / %zu 贴图\n",
+                    sr::lex::displayPath(objPath).c_str(), m.stats.triangles,
+                    m.model.groups.size(), m.textures.size());
+        if (scene.fitEnabled) scene.refit(width, height);
+    } else {
+        std::printf("[obj] 载入失败: %s\n", scene.errorLine.c_str());
+    }
 }
 
 int runOffscreen(const app::AppOptions& o) {
     g_gradientBackground = o.gradient;   // 离屏默认也走纯色，golden 场景自己决定背景
     auto surface = app::createOffscreenSurface(o.width, o.height);
     sr::RenderTarget& target = surface->target();
+
+    app::SceneState scene;
+    scene.camera.yaw = o.yaw;
+    scene.camera.pitch = o.pitch;
+    scene.camera.distance = o.distance;
+    scene.fitEnabled = !o.noFit;   // --no-fit：载入后不自动调整相机（F 仍可手动）
+    if (!o.obj.empty()) {
+        // nativePath：全仓库唯一的 UTF-8→path 转换点（D18）。argv 已在 main 开头统一成 UTF-8。
+        loadObjIntoScene(scene, app::nativePath(o.obj), o.width, o.height);
+    }
 
     sr::Timer total;
     std::vector<double> frameMs;
@@ -201,16 +267,12 @@ int runOffscreen(const app::AppOptions& o) {
         const std::string status = "OFFSCREEN FRAME " + std::to_string(i + 1) + "/" +
                                    std::to_string(o.frames) + "  " + std::to_string(o.width) + "X" +
                                    std::to_string(o.height);
-        sr::OrbitCamera camera;
-        camera.yaw = o.yaw;
-        camera.pitch = o.pitch;
-        camera.distance = o.distance;
-        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, camera);
+        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, scene);
         frameMs.push_back(frameTimer.elapsedMs());
     }
     const double ms = total.elapsedMs();
 
-    const std::string outPath = o.out.empty() ? "out.bmp" : o.out;
+    const std::filesystem::path outPath = app::nativePath(o.out.empty() ? "out.bmp" : o.out);
     std::string err;
     if (saveScreenshot(target, outPath, err) != 0) return 1;
 
@@ -228,9 +290,6 @@ int runOffscreen(const app::AppOptions& o) {
     if (o.bench > 0) {
         std::printf("[bench] 分阶段计时要到 M2 才有内容可测；现在只有整帧时间。\n");
     }
-    if (!o.obj.empty()) {
-        std::printf("[提示] --obj 从 M5 开始生效，现在会忽略它。\n");
-    }
     return 0;
 }
 
@@ -244,12 +303,10 @@ int runWindow(const app::AppOptions& o) {
     if (o.backend == "b") {
         std::printf("[提示] --backend b 要到 M8 才存在，现在总是用标量后端 a。\n");
     }
-    if (!o.obj.empty()) {
-        std::printf("[提示] --obj 从 M5 开始生效，现在会忽略它。\n");
-    }
     std::printf("[window] %s — %dx%d\n", sr::buildInfoString(), o.width, o.height);
     std::printf("[window] P=暂停 O=单步 S=截图 V=视图 Esc=退出\n");
     std::printf("[window] 1=开关 mip（关掉后斜面和远处会闪） 2=采样模式 nearest/bilinear/trilinear\n");
+    std::printf("[window] R=重载模型 F=重新 fit（不动视角） 拖放 .obj 进窗口即可载入\n");
 
     sr::RenderTarget& target = surface->target();
     sr::Timer clock;
@@ -258,10 +315,16 @@ int runWindow(const app::AppOptions& o) {
     bool paused = false;
     float phase = 0.0f;
     g_gradientBackground = o.gradient;
-    sr::OrbitCamera camera;
-    camera.yaw = o.yaw;
-    camera.pitch = o.pitch;
-    camera.distance = o.distance;
+    app::SceneState scene;
+    scene.camera.yaw = o.yaw;
+    scene.camera.pitch = o.pitch;
+    scene.camera.distance = o.distance;
+    scene.fitEnabled = !o.noFit;   // --no-fit：载入后不自动调整相机（F 仍可手动）
+    if (!o.obj.empty()) {
+        // 首载失败不退出：兜底立方体留在画面上，错误进终端 + HUD 第二行（M5.6）。
+        // nativePath：全仓库唯一的 UTF-8→path 转换点（D18）。
+        loadObjIntoScene(scene, app::nativePath(o.obj), o.width, o.height);
+    }
     // 自动旋转在**没有拖拽**时进行；拖拽一次之后从新朝向接着转（不是回到原角度），
     // 否则用户刚摆好的视角会被下一帧覆盖掉，那种"抢镜头"的观感非常差。
     bool dragging = false;
@@ -299,6 +362,20 @@ int runWindow(const app::AppOptions& o) {
             g_filter = nextFilter(g_filter);
             std::printf("[filter] %s\n", filterName(g_filter));
         }
+        // F = 显式重 fit：只动 distance/target/near/far，yaw/pitch 归用户（D15）。
+        // 不受 --no-fit 门控：fitEnabled 只管"载入后的自动 fit"，按 F 是手动请求。
+        if (input.refit) scene.refit(target.color.width, target.color.height);
+        // R = 重载同一个 path（失败保留旧模型，错误行持续到下次成功）。
+        // 从未请求过模型（无 --obj 无拖放）时无事可做。
+        if (input.reloadModel && !scene.requested.empty()) {
+            loadObjIntoScene(scene, scene.requested, target.color.width, target.color.height);
+        }
+        // 拖放（M5.6）：shell 给的路径已在 win32_window.cpp 转成 UTF-8，这里经
+        // nativePath 走与 --obj 完全相同的入口（后缀守卫在 SceneState::load，A4）。
+        if (!input.droppedObj.empty()) {
+            loadObjIntoScene(scene, app::nativePath(input.droppedObj), target.color.width,
+                             target.color.height);
+        }
         if (input.screenshot) {
             ++screenshotCounter;
             const std::string path = "screenshots/screenshot-" + std::to_string(screenshotCounter) + ".bmp";
@@ -313,27 +390,27 @@ int runWindow(const app::AppOptions& o) {
             // 这样"冻结当前帧再看细节"才成立（设计文档 C7）。
             dragging = input.leftPressed;
             if (dragging) {
-                camera.orbit(input.dx, input.dy);
+                scene.camera.orbit(input.dx, input.dy);
             } else {
                 // 与帧时间无关的角速度：掉帧时转速不变（否则慢帧会让物体看起来忽快忽慢）。
-                camera.yaw += kTurntableRadiansPerSecond * static_cast<float>(lastFrameSeconds * 1.0);
+                scene.camera.yaw += kTurntableRadiansPerSecond * static_cast<float>(lastFrameSeconds * 1.0);
             }
-            if (input.wheel != 0.0f) camera.dolly(input.wheel);
+            if (input.wheel != 0.0f) scene.camera.dolly(input.wheel);
 
             sr::Timer frameTimer;
             const double fpsNow = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
-            (void)camera;
             // 采样状态与相机姿态都要上 HUD：前者是"我现在该看到什么"（关 mip 该闪），
             // 后者是"这张截图怎么用命令行复现"（--yaw/--pitch/--distance 同名字段）。
             char buf[200];
             std::snprintf(buf, sizeof(buf),
                           "FPS %.1f  %.2f MS  Y %.2f P %.2f D %.1f  MIP %s  %s%s",
-                          fpsNow, lastMs, static_cast<double>(camera.yaw),
-                          static_cast<double>(camera.pitch), static_cast<double>(camera.distance),
+                          fpsNow, lastMs, static_cast<double>(scene.camera.yaw),
+                          static_cast<double>(scene.camera.pitch),
+                          static_cast<double>(scene.camera.distance),
                           g_useMip ? "ON" : "OFF", filterName(g_filter),
                           paused ? (dragging ? "  PAUSED DRAG" : "  PAUSED")
                                  : (dragging ? "  DRAG" : ""));
-            renderFrame(target, phase, buf, camera);
+            renderFrame(target, phase, buf, scene);
             // 与帧时间相关：掉帧时动画速度不变（float 累加，所以乘的是 float）。
             phase += static_cast<float>(0.35 * lastMs * 0.001);
             lastMs = frameTimer.elapsedMs();
@@ -375,9 +452,27 @@ int runWindow(const app::AppOptions& o) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // UTF-8 argv 桥（D18）：产品方的 shell 是 Git Bash/MSYS2，传的是 UTF-8；而 MSVC CRT
+    // 的窄 argv 按本地 ANSI 码页（本机 936）从 UTF-16 命令行转出来，中文路径会 mojibake。
+    // 所以这里用 GetCommandLineW + CommandLineToArgvW 取 UTF-16 argv，统一转成 UTF-8
+    // 再喂**现有的** parseCmdline（cmdline.cpp 与它的测试一行不改，它们喂的一直是 ASCII）。
+    // AppOptions 的路径字段从此是 UTF-8 语义；nativePath 是全仓库唯一的 UTF-8→path 转换点。
+    std::vector<std::string> args;
+    std::vector<char*> argp;
+    int argcW = 0;
+    LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argcW);
+    if (argvW != nullptr) {
+        args.reserve(static_cast<size_t>(argcW));
+        for (int i = 0; i < argcW; ++i) args.push_back(app::utf8FromWide(argvW[i]));
+        LocalFree(argvW);
+        for (std::string& s : args) argp.push_back(s.data());
+        argc = static_cast<int>(argp.size());
+        argv = argp.data();
+    }
+    // CommandLineToArgvW 失败（极端 OOM）时退回 CRT argv：ASCII 路径仍可用，比不启动好。
+
     app::AppOptions o;
     std::string err;
-    // argv 在 Windows 下是本地编码（这里假设 UTF-8：--obj 路径含中文时由调用方决定）。
     if (!app::parseCmdline(argc, argv, o, err)) {
         std::printf("[参数错误] %s\n\n%s", err.c_str(), app::usageString().c_str());
         return 2;
@@ -389,23 +484,24 @@ int main(int argc, char** argv) {
     // 资产生成入口（M5 锚 2 的 provenance）：不渲染、不建 surface，写完即返回。
     // 与 golden 入口互斥已在 parseCmdline 里拒绝，这里不会静默忽略谁。
     if (!o.emitCheckerTga.empty()) {
+        const std::filesystem::path tgaPath = app::nativePath(o.emitCheckerTga);
         const sr::ImageRGBA8 checker =
             sr::makeCheckerImage(sr::kGoldenCheckerCells, sr::kGoldenCheckerCellPx, {});
         std::string werr;
-        if (!sr::writeTga(o.emitCheckerTga, checker, werr)) {
+        if (!sr::writeTga(tgaPath, checker, werr)) {
             std::printf("[checker-tga] 失败: %s\n", werr.c_str());
             return 1;
         }
         std::printf("[checker-tga] %dx%d → %s 由 makeCheckerImage(%d,%d) + writeTga，%s\n",
-                    checker.width, checker.height, o.emitCheckerTga.c_str(),
+                    checker.width, checker.height, sr::lex::displayPath(tgaPath).c_str(),
                     sr::kGoldenCheckerCells, sr::kGoldenCheckerCellPx, sr::buildInfoString());
         return 0;
     }
     if (!o.goldenWrite.empty()) {
-        return writeGolden("m3_cube", o.goldenWrite, sr::renderGoldenScene);
+        return writeGolden("m3_cube", app::nativePath(o.goldenWrite), sr::renderGoldenScene);
     }
     if (!o.goldenWriteTextured.empty()) {
-        return writeGolden("m4_textured_cube", o.goldenWriteTextured,
+        return writeGolden("m4_textured_cube", app::nativePath(o.goldenWriteTextured),
                            sr::renderGoldenSceneTextured);
     }
     if (o.offscreen) return runOffscreen(o);

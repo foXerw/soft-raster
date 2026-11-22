@@ -174,5 +174,7 @@ if(SR_BUILD_APP AND WIN32 AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/app/main.cp
   if(MSVC)
     target_compile_options(soft-raster PRIVATE /W4 /utf-8 /MP /EHsc /Zi)
   endif()
-  target_link_libraries(soft-raster PRIVATE user32 gdi32)
+  # shell32（M5.6）：CommandLineToArgvW（UTF-8 argv 桥，D18）与 DragAcceptFiles/
+  # DragQueryFileW/DragFinish（拖放 .obj）。
+  target_link_libraries(soft-raster PRIVATE user32 gdi32 shell32)
 endif()

@@ -4,6 +4,8 @@
 #include <fstream>
 #include <vector>
 
+#include "loader/lex.h"   // displayPath（Ruling 62：消息里的路径不用 .string()）
+
 namespace sr {
 namespace {
 
@@ -32,7 +34,7 @@ inline uint8_t byteOf(uint32_t packed, int shift) {
 
 }  // namespace
 
-bool writeBmp(const std::string& path, const ColorTarget& target, std::string& err) {
+bool writeBmp(const std::filesystem::path& path, const ColorTarget& target, std::string& err) {
     err.clear();
 
     // ---- 校验：必须在动任何文件之前完成 -----------------------------------
@@ -100,13 +102,14 @@ bool writeBmp(const std::string& path, const ColorTarget& target, std::string& e
 
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
-        err = "writeBmp: cannot open '" + path + "' for writing (does the directory exist?)";
+        err = "writeBmp: cannot open '" + lex::displayPath(path) +
+              "' for writing (does the directory exist?)";
         return false;
     }
     file.write(reinterpret_cast<const char*>(out.data()), static_cast<std::streamsize>(out.size()));
     file.close();
     if (!file) {
-        err = "writeBmp: write to '" + path + "' failed";
+        err = "writeBmp: write to '" + lex::displayPath(path) + "' failed";
         return false;
     }
     return true;
