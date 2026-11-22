@@ -1,0 +1,10 @@
+# twomats.mtl — M5.4。plain 无贴图（守 Ruling 32 纯色兜底）；
+# texA/texB 共用 ../tga/checker.tga（相对 MTL 目录，Ruling 47）守 D11 去重。
+newmtl plain
+Kd 1 0 0
+newmtl texA
+Kd 1 1 1
+map_Kd ../tga/checker.tga
+newmtl texB
+Kd 1 1 1
+map_Kd ../tga/checker.tga

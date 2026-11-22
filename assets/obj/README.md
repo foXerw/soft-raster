@@ -50,6 +50,23 @@ sha256sum assets/tga/checker.tga   # 应等于上表那串
 用 `--emit-checker-tga` 重生成来"修"红掉的锚 2，等于把 oracle 换成被告自己的证词。
 重新生成参考资产需要产品方肉眼验收（验证纪律 #4），不是测试红了就能做的事。
 
+## twomats.obj / twomats.mtl 的 provenance（M5.4）
+
+**手写**资产（作者用一段一次性脚本算好顶点/索引再落盘，脚本不入库；几何沿用
+`makeCube` 的面序与绕向约定）。它钉住三件事：
+
+| 项 | 值 / 守什么 |
+|---|---|
+| 几何 | 两个轴对齐盒子（中心 ±1.2，半边 0.5），16 个 `v`、6 个 `vn`、盒 B 24 个 `vt` |
+| 分组 | **三个材质组**：盒 A 全 `plain`；盒 B 前三面 `texA`、后三面 `texB` ⇒ `drawCalls == 3`（`draw_model_uses_one_draw_call_per_group`） |
+| 贴图去重 | `texA`/`texB` 的 `map_Kd` 都写 `../tga/checker.tga`（**相对 MTL 目录**，Ruling 47）⇒ canonical 去重后 `textures.size() == 1`（D11） |
+| 纯色兜底 | `plain` 无 `map_Kd`、`Kd 1 0 0` ⇒ 守 Ruling 32"无贴图退回 Kd 纯色不是黑" |
+
+- `twomats.mtl` 复用 M5.3 的 `assets/tga/checker.tga`，**零新增图像资产**（Ruling 47）。
+- 行尾 LF（`.gitattributes` 已声明 `*.obj`/`*.mtl text eol=lf`）；提交后复核
+  `git show HEAD:assets/obj/twomats.mtl | od -c | head` 无 CR。
+- 它**不是** golden 锚（锚 1/3 用 M5.7 的 `cube.obj`）；朝向/绕向的肉眼验收归 M5.6。
+
 ## 生成提交
 
 - SHA：`8b3c11a`（feat/m5-obj 分支；资产与生成它的代码同提交入库）

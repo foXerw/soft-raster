@@ -28,6 +28,8 @@ namespace sr {
 bool tgaPayloadFits(int w, int h, int bytesPP, bool rle, size_t available);
 
 // 从内存解析。失败返回 false、err 非空，out 保持为空。绝不读越过 size 的字节。
+// 任一边超过 kMaxTextureSide（D13）⇒ 在**分配之前**拒绝（Ruling 63：与第三方路径对称，
+// 因为 loadModel 把 .tga 路由到本解析器）。错误消息带上限值。
 bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& err);
 
 // 读文件再解析。文件打不开时 err 里带上路径。

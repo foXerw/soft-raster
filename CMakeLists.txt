@@ -68,6 +68,7 @@ endif()
 add_library(soft_raster_loader STATIC
   src/loader/image_stb.cpp
   src/loader/image_tga.cpp
+  src/loader/model.cpp
 )
 target_link_libraries(soft_raster_loader PUBLIC soft_raster_core)
 target_include_directories(soft_raster_loader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -127,6 +128,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_tga_writer.cpp
     tests/unit/test_mtl.cpp
     tests/unit/test_obj.cpp
+    tests/unit/test_model.cpp
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp

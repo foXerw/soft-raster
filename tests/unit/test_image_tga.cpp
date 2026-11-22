@@ -78,6 +78,46 @@ SR_TEST(tga_rle_huge_claim_is_rejected_before_allocating) {
     SR_ASSERT_EQ(img.rgba.size(), 0u);
 }
 
+SR_TEST(tga_oversized_header_is_rejected_by_the_side_cap_before_allocating) {
+    // Ruling 63 / D13：18 字节的头声称 65535x65535（≈17 GiB RGBA），没有任何像素数据。
+    // 拒绝必须来自**尺寸上限**那道守卫（消息含 4096/kMaxTextureSide），且发生在分配之前。
+    // 夹具是 header-only，两种回归都可观测：
+    //   - 上限被挪到 assign 之后 ⇒ 那次 assign 尝试 17 GiB ⇒ bad_alloc 当场炸（不是静默分配）；
+    //   - 上限被删 ⇒ tgaPayloadFits 先以"像素数据不足"拒绝 ⇒ 本条**消息断言**红，
+    //     把拒绝归因到具体哪道守卫（trap (a)：两道守卫都能拒同一输入，靠消息文本区分）。
+    std::vector<uint8_t> d = header(2, 65535, 65535, 24, 0x20);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT_FALSE(parse(d, img, err));
+    SR_ASSERT_FALSE(err.empty());
+    if (err.find("4096") == std::string::npos) std::printf("[tga] 上限错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("4096") != std::string::npos);
+    SR_ASSERT(err.find("kMaxTextureSide") != std::string::npos);
+    SR_ASSERT_EQ(img.width, 0);          // 失败不留半成品
+    SR_ASSERT_EQ(img.rgba.size(), 0u);
+}
+
+SR_TEST(tga_side_cap_applies_even_when_the_payload_is_complete) {
+    // P15 闭合：一张**数据齐全**的 4097x1 TGA（刚好超上限一边）也必须被拒。
+    // 4097*3=12291 字节像素给足 ⇒ tgaPayloadFits 通过 ⇒ 唯一能拒它的就是尺寸上限
+    // （否则真 8192² 的 TGA 能从 loadTgaFile 走通，上限只守第三方那条路径）。
+    std::vector<uint8_t> d = header(2, 4097, 1, 24, 0x20);
+    d.insert(d.end(), 4097 * 3, 0);
+    sr::ImageRGBA8 img;
+    std::string err;
+    SR_ASSERT_FALSE(parse(d, img, err));
+    if (err.find("4096") == std::string::npos) std::printf("[tga] 上限错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("4096") != std::string::npos);
+    SR_ASSERT_EQ(img.rgba.size(), 0u);
+    // 边界内一边：4096x1 数据齐全 ⇒ 必须成功（上限是 > 不是 >=，删掉等号会误拒合法图）。
+    std::vector<uint8_t> ok = header(2, 4096, 1, 24, 0x20);
+    ok.insert(ok.end(), 4096 * 3, 0);
+    sr::ImageRGBA8 img2;
+    std::string err2;
+    SR_ASSERT(parse(ok, img2, err2));
+    SR_ASSERT_EQ(img2.width, 4096);
+}
+
 SR_TEST(tga_24bit_bottom_up_storage_becomes_top_down) {
     // 2x2，type 2（未压缩 truecolor），descriptor = 0 ⇒ **行自底向上存储**（TGA 的默认）。
     // 输出要求 top-down（C8），所以文件里的第一行必须落到输出的**最后一行**。

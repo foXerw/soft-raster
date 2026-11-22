@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "harness.h"
+#include "render/sampler.h"   // makeTexture / sampleNearestLevel（deferred #2 的越界采样）
 #include "test_util.h"
 
 namespace {
@@ -62,6 +63,32 @@ SR_TEST(box_downsample_averages_each_2x2_block) {
     SR_ASSERT_EQ(mip.rgba[1], 90);
     SR_ASSERT_EQ(mip.rgba[2], 90);
     SR_ASSERT_EQ(mip.rgba[3], 255);     // alpha 也做平均还是保留？约定：平均，这里全 255 所以看不出
+}
+
+SR_TEST(box_downsample_averages_alpha_not_just_rgb) {
+    // deferred #3（M5.4 关闭）：上面那条夹具 alpha 恒 255，分不出"平均"与"保持"。
+    // 这里 alpha 交替 0/255 ⇒ 2x2 平均 = (0+255+255+0+2)/4 = 128。rgb 恒 100 ⇒ 同一次平均得 100。
+    // 变异：alpha 若被"保持"（复制首像素 0）或强制 255，本条立刻红 —— M4 看不见的正是这个。
+    sr::ImageRGBA8 base;
+    base.width = 2;
+    base.height = 2;
+    base.rgba.assign(16, 0);
+    const auto set = [&](int x, int y, uint8_t a) {
+        const size_t at = (static_cast<size_t>(y) * 2 + static_cast<size_t>(x)) * 4u;
+        base.rgba[at] = 100;
+        base.rgba[at + 1] = 100;
+        base.rgba[at + 2] = 100;
+        base.rgba[at + 3] = a;
+    };
+    set(0, 0, 0);
+    set(1, 0, 255);
+    set(0, 1, 255);
+    set(1, 1, 0);
+    const sr::ImageRGBA8 mip = sr::downsampleBox2(base);
+    SR_ASSERT_EQ(mip.width, 1);
+    SR_ASSERT_EQ(mip.height, 1);
+    SR_ASSERT_EQ(mip.rgba[0], 100);          // rgb 与 alpha 走同一次 2x2 平均
+    SR_ASSERT_NEAR(mip.rgba[3], 128.0, 1.0); // 127/128 都接受（±1 量化）
 }
 
 SR_TEST(box_downsample_of_odd_width_drops_the_last_column) {
@@ -160,4 +187,24 @@ SR_TEST(texture_texel_returns_a_readable_pointer) {
     SR_ASSERT_EQ(q[0], 255);
     SR_ASSERT(t.texel(0, 99, 0) == nullptr);   // 越界返回 nullptr 而不是读到界外
     SR_ASSERT(t.texel(5, 0, 0) == nullptr);    // 不存在的层级同理
+}
+
+SR_TEST(texture_counts_out_of_range_texel_samples_in_debug) {
+#ifdef NDEBUG
+    // Ruling 48：计数是 debug-only 观测器，Release 下成员都不存在 ⇒ 打印 [skip] 后 return，
+    // 不留空体、也不留一条恒真断言（"绿得没有内容"）。Debug 是主判定路径（C1′）。
+    std::printf("[skip] 越界纹素计数是 debug-only 观测器，Release 不判定（Ruling 48）\n");
+    return;
+#else
+    // deferred #2：故意构造一个 levels 少一级的 Texture，采那个不存在的级 ⇒ texel() 交回
+    // nullptr ⇒ toTexelF 静默给全 0，但 debug 计数必须 bump（把"reachable 的静默"变可观测）。
+    sr::Texture t = sr::makeTexture(makeGrayImage(4, 4, grayConstant200), true);
+    SR_ASSERT_EQ(t.levelCount(), 3);          // 4x4 → 2x2 → 1x1
+    t.levels.pop_back();                      // 少一级
+    SR_ASSERT_EQ(t.levelCount(), 2);
+    const sr::TexelF z = sr::sampleNearestLevel(t, 2, sr::WrapMode::ClampEdge,
+                                                sr::WrapMode::ClampEdge, 0.5f, 0.5f);
+    SR_ASSERT_NEAR(z.r, 0.0f, 1e-6f);         // 越界仍返回有定义的全 0（不放 NaN）
+    SR_ASSERT(t.outOfRangeTexelSamples > 0);  // 变异：删掉 toTexelF 的 bump ⇒ 本条红
+#endif
 }

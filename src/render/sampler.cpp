@@ -48,7 +48,14 @@ namespace {
 // 字节 → 线性值。nearest 与 bilinear 共用一份：解码规则（哪些通道解码、alpha 不解码）
 // 写两遍的话，将来只改一遍就会出现"同一张图两种过滤给出不同的暗部"。
 TexelF toTexelF(const Texture& t, const uint8_t* px) {
-    if (px == nullptr) return TexelF{};    // 空纹理/越界。仍然返回有定义的值，不放 NaN 出去
+    if (px == nullptr) {
+        // 空纹理/越界。仍然返回有定义的值，不放 NaN 出去；但 debug 下记一次（deferred #2），
+        // 让"静默全 0"变成可观测。竞争语义与为什么不用 FrameStats 见 texture.h 的成员注释。
+#ifndef NDEBUG
+        ++t.outOfRangeTexelSamples;
+#endif
+        return TexelF{};
+    }
     TexelF out;
     if (t.srgb) {
         // 每个通道一次 256 项查表（Task 0.3 的 DecodeLut），不是 pow：

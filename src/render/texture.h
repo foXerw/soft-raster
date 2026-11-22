@@ -31,6 +31,20 @@ struct Texture {
     // 于是"uv 视图"不再是 uv 视图。这就是 GPU 区分 SRGB8_ALPHA8 与 RGBA8 的理由。
     bool srgb = true;
 
+#ifndef NDEBUG
+    // deferred #2（M5.4 关闭）：texel() 交回 nullptr（空纹理/越界级/越界坐标）时，
+    // toTexelF 静默返回全 0 —— M5 第一次让外部文件的 uv 可以越界，这条从"理论的静默"
+    // 变成"reachable 的静默"。这个计数把"发生了多少次"变成可观测的（采样器在 nullptr 分支 bump）。
+    //
+    // 为什么是 debug-only 的 mutable 成员而不是 FrameStats 字段（收紧 6）：sample() 只收
+    // Texture/SamplerState，拿不到 stats；往 FragmentUniforms 塞 stats 指针会把生命周期问题
+    // 带进逐像素热路径。按 Texture 归属还能说出"是哪张贴图"越界。mutable 因为采样是 const 操作。
+    // M8 多线程前这是一个**已知的良性竞争**（非原子 ++，tile 间不共享 Texture 时其实无竞争；
+    // 共享时丢几个计数不影响正确性，只影响观测精度），注释写明，M8 聚合时再处理。
+    // Release 下整个成员不存在：不为一个恒 0 的观测器留 8 字节，也不留一条恒真断言（Ruling 48）。
+    mutable int64_t outOfRangeTexelSamples = 0;
+#endif
+
     int levelCount() const { return static_cast<int>(levels.size()); }
     const uint8_t* texel(int level, int x, int y) const;
 };

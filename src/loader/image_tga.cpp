@@ -59,6 +59,16 @@ bool parseTga(const uint8_t* data, size_t size, ImageRGBA8& out, std::string& er
         err = fail("", "尺寸非法 " + std::to_string(w) + "x" + std::to_string(h));
         return false;
     }
+    // D13 / Ruling 63：单边上限 kMaxTextureSide 现在 TGA 侧也强制（与第三方路径对称，
+    // 关闭 M5.3 的 P15）。**先问后分配**：放在任何像素分配/长度下界检查之前，一个 18 字节
+    // 的头声称 8192² 不该换走一次 256 MiB 的 assign。loadModel 按 .tga 后缀把贴图路由到
+    // 本解析器（锚 2 守的那条路径），所以这条上限必须在这里成立，不能只靠第三方那边。
+    if (w > kMaxTextureSide || h > kMaxTextureSide) {
+        err = fail("", "尺寸 " + std::to_string(w) + "x" + std::to_string(h) +
+                           " 超过 kMaxTextureSide=" + std::to_string(kMaxTextureSide) +
+                           "（先问后分配：拒绝发生在像素分配之前）");
+        return false;
+    }
     if (cmapType != 0 || imageType == 1 || imageType == 9) {
         err = fail("", "不支持调色板型 TGA（imageType=" + std::to_string(imageType) + "）");
         return false;
