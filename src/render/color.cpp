@@ -70,6 +70,18 @@ uint8_t linearToSrgb8(float v) {
 
 float srgb8ToLinear(uint8_t v) { return decodeLut().linear[v]; }
 
+float srgbToLinear(float v) {
+    // 复用字节版 LUT 背后的同一条解析曲线（decodeAnalytic），只是不量化输入。
+    // clamp01 先把 NaN/越界挡成 [0,1]：NaN 走 `!(v>0)` 那一支返回 0（与 plane_eq.h 的
+    // NaN 守卫同一个写法风格），于是 0 与 1 这两个不动点恰好精确落回自身 —— 解码在两头
+    // 必须精确，否则 Kd 1 1 1 不再是"无 tint"，零容差的 golden 会整体偏一档。
+    return decodeAnalytic(clamp01(v));
+}
+
+LinearColor srgbToLinear(const LinearColor& c) {
+    return LinearColor{srgbToLinear(c.r), srgbToLinear(c.g), srgbToLinear(c.b)};
+}
+
 uint32_t encodeSRGB(const LinearColor& c, float alpha) {
     const float a = clamp01(alpha);
     return packBGRA(linearToSrgb8(c.r), linearToSrgb8(c.g), linearToSrgb8(c.b),

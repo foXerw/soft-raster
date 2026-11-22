@@ -20,6 +20,13 @@ uint32_t packBGRA(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 uint8_t linearToSrgb8(float v);
 float srgb8ToLinear(uint8_t v);
 
+// sRGB → 线性的**浮点**版（M5.1）。与 srgb8ToLinear 唯一的区别是**不经过 256 级量化**：
+// MTL 的 Kd 本来就是浮点，走字节版会把 0.5 变成 128/255 再解码，白白吃掉一档。
+// 输入 clamp 到 [0,1]，NaN 返回 0（与 linearToSrgb8 同一条"未定义输入也有定义输出"的理由）。
+// 两端必须精确：Kd 1 1 1 解成非 1 会让"无 tint"不再成立，而 golden 是零容差比对。
+float srgbToLinear(float v);
+LinearColor srgbToLinear(const LinearColor& c);
+
 // 整色编码成 0xAARRGGBB（走 LUT，这是它出现在每个像素出口的原因）。
 uint32_t encodeSRGB(const LinearColor& c, float alpha = 1.0f);
 LinearColor decodeSRGB(uint32_t packed);

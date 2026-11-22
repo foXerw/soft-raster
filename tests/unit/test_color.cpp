@@ -117,3 +117,43 @@ SR_TEST(encodeSRGB_uses_alpha_verbatim) {
     SR_ASSERT_EQ(sr::encodeSRGB({0.0f, 0.0f, 0.0f}, 0.5f) >> 24, 0x80u);
     SR_ASSERT_EQ(sr::encodeSRGB({0.0f, 0.0f, 0.0f}, 0.0f) >> 24, 0x00u);
 }
+
+// ---- 浮点 sRGB→linear（M5.1）：MTL 的 Kd 本来就是浮点，不能先量化成字节 ----
+// 注意 0.0 与 1.0 是这条曲线的不动点：只测这两端的测试对"直接 return v"这种错误
+// 永远绿（变异①实测过），所以中点 0.5 与单调性才是真正有鉴别力的断言。
+
+SR_TEST(srgbToLinear_float_endpoints_are_exact) {
+    // 两端必须**精确**（容差 0）：Kd 1 1 1 解成非 1 会让"无 tint"这件事不再成立，
+    // 而 golden 是零容差比对，整体偏一档会被当成光照问题去查。
+    SR_ASSERT_NEAR(sr::srgbToLinear(0.0f), 0.0f, 0.0f);
+    SR_ASSERT_NEAR(sr::srgbToLinear(1.0f), 1.0f, 0.0f);
+}
+
+SR_TEST(srgbToLinear_float_midpoint_matches_iec_curve) {
+    // 0.5 是 display-referred 的中间灰，IEC 解出来 ≈ 0.21404（不是 0.5，也不是 0.25）。
+    // 走字节版会先把 0.5 量化成 128/255≈0.50196 再解码，白白吃掉一档 —— 这条钉住浮点路径。
+    SR_ASSERT_NEAR(sr::srgbToLinear(0.5f), 0.21404f, 1e-4f);
+}
+
+SR_TEST(srgbToLinear_float_clamps_out_of_range_and_nan) {
+    SR_ASSERT_NEAR(sr::srgbToLinear(1.5f), 1.0f, 1e-5f);
+    SR_ASSERT_NEAR(sr::srgbToLinear(-0.3f), 0.0f, 1e-5f);
+    // NaN 必须有定义输出（与 linearToSrgb8 同一条理由）：否则顺着 tint 污染整块像素。
+    SR_ASSERT_NEAR(sr::srgbToLinear(std::nanf("")), 0.0f, 0.0f);
+}
+
+SR_TEST(srgbToLinear_float_is_monotonic) {
+    float prev = -1.0f;
+    for (int i = 0; i <= 32; ++i) {  // 33 个采样点，逐点不减
+        const float v = sr::srgbToLinear(static_cast<float>(i) / 32.0f);
+        SR_ASSERT(v >= prev);
+        prev = v;
+    }
+}
+
+SR_TEST(srgbToLinear_color_decodes_each_channel) {
+    const sr::LinearColor c = sr::srgbToLinear(sr::LinearColor{0.0f, 0.5f, 1.0f});
+    SR_ASSERT_NEAR(c.r, 0.0f, 0.0f);
+    SR_ASSERT_NEAR(c.g, 0.21404f, 1e-4f);
+    SR_ASSERT_NEAR(c.b, 1.0f, 0.0f);
+}

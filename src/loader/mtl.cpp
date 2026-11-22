@@ -1,0 +1,195 @@
+#include "loader/mtl.h"
+
+#include <charconv>
+#include <cmath>
+#include <utility>
+
+namespace sr {
+namespace {
+
+// 整个 token 必须是一个有限数字才算成功：from_chars 不跳前导空白、不吃尾随垃圾，
+// r.ptr != last 就把 "0.5abc" 这种挡掉。非有限值（inf/nan）也拒绝 —— 一个 NaN 的 opacity
+// 会在 M6 安静地长出来（Ruling 52 担心的那类延迟故障），不如在解析时就当坏参数报错。
+bool parseFloat(std::string_view tok, float& v) {
+    if (tok.empty()) return false;
+    const char* first = tok.data();
+    const char* last = first + tok.size();
+    const auto r = std::from_chars(first, last, v, std::chars_format::general);
+    if (r.ec != std::errc{} || r.ptr != last) return false;
+    return std::isfinite(v);
+}
+
+// 按空格/tab 切 token。行内的 \r\n 已在行切分阶段处理掉。
+std::vector<std::string_view> tokenize(std::string_view line) {
+    std::vector<std::string_view> t;
+    size_t i = 0;
+    while (i < line.size()) {
+        while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= line.size()) break;
+        const size_t start = i;
+        while (i < line.size() && line[i] != ' ' && line[i] != '\t') ++i;
+        t.push_back(line.substr(start, i - start));
+    }
+    return t;
+}
+
+bool startsWithDigit(std::string_view tok) {
+    return !tok.empty() && tok[0] >= '0' && tok[0] <= '9';
+}
+
+// D17 的 arity 表：**只决定"少吞还是多吞"，不是白名单**。未知选项返回 -1，
+// 走"丢自己 + 吞紧随的数字 token + 警告"那一支，而不是把整行报错。
+int optionArity(std::string_view opt) {
+    if (opt == "-s" || opt == "-o" || opt == "-bf" || opt == "-cc" || opt == "-t" ||
+        opt == "-mm")
+        return 3;
+    if (opt == "-bm" || opt == "-blend" || opt == "-bobst" || opt == "-boost" ||
+        opt == "-bump" || opt == "-texres" || opt == "-cl" || opt == "-clamp" ||
+        opt == "-fov" || opt == "-imf" || opt == "-pr" || opt == "-sa" || opt == "-tile_res")
+        return 1;
+    return -1;
+}
+
+std::string joinFrom(const std::vector<std::string_view>& tokens, size_t start) {
+    std::string s;
+    for (size_t i = start; i < tokens.size(); ++i) {
+        if (!s.empty()) s += ' ';
+        s.append(tokens[i].data(), tokens[i].size());
+    }
+    return s;
+}
+
+}  // namespace
+
+const Material& defaultMaterial() {
+    // 函数内 static：引用进程生命周期内有效，M5.2 的 parseObj 会反复取它作兜底。
+    static const Material kDefault{};
+    return kDefault;
+}
+
+bool parseMtl(std::string_view text, std::vector<Material>& out,
+              std::vector<std::string>& warnings, MtlStats& stats, std::string& err) {
+    out.clear();
+    err.clear();
+
+    // 材质先建在本地 vector 里，成功才 move 进 out —— D6 全有或全无：任何一步失败都
+    // 让 out 保持空，半解析的材质列表比没有更糟。cur 用**下标**而不是指针：emplace_back
+    // 会让 vector 重新分配，指针会失效。
+    std::vector<Material> mats;
+    int cur = -1;
+
+    auto fail = [&](std::string msg) {
+        out.clear();
+        err = std::move(msg);
+        return false;
+    };
+    auto lineTag = [](int n) { return "第 " + std::to_string(n) + " 行: "; };
+
+    // UTF-8 BOM 剥掉，否则它会被当成第一行的未知指令（与 OBJ 侧 M5.2 同一种容忍）。
+    size_t pos = 0;
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF)
+        pos = 3;
+
+    int lineNo = 0;
+    while (pos < text.size()) {
+        // 行切分容忍 CRLF 与裸 CR：\r\n 算一个行尾，单独的 \r 或 \n 也算。
+        size_t end = pos;
+        while (end < text.size() && text[end] != '\n' && text[end] != '\r') ++end;
+        std::string_view line = text.substr(pos, end - pos);
+        ++lineNo;
+        if (end < text.size()) {
+            if (text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n')
+                end += 2;
+            else
+                end += 1;
+        }
+        pos = end;
+
+        // '#' 起是注释；空行/纯注释跳过。
+        const size_t hash = line.find('#');
+        if (hash != std::string_view::npos) line = line.substr(0, hash);
+        const std::vector<std::string_view> tokens = tokenize(line);
+        if (tokens.empty()) continue;
+
+        const std::string_view dir = tokens[0];
+
+        if (dir == "newmtl") {
+            mats.emplace_back();
+            cur = static_cast<int>(mats.size()) - 1;
+            mats[cur].name = joinFrom(tokens, 1);
+            continue;
+        }
+
+        // 其余都是"作用于当前材质"的指令：没有 newmtl 在前就是结构性错误（D6）。
+        if (cur < 0) return fail(lineTag(lineNo) + "'" + std::string(dir) + "' 出现在任何 newmtl 之前");
+
+        if (dir == "Kd" || dir == "Ka" || dir == "Ks") {
+            if (tokens.size() < 4)
+                return fail(lineTag(lineNo) + std::string(dir) + " 需要 3 个数字参数");
+            float rgb[3];
+            for (int k = 0; k < 3; ++k) {
+                if (!parseFloat(tokens[k + 1], rgb[k]))
+                    return fail(lineTag(lineNo) + std::string(dir) + " 的数字参数 '" +
+                                std::string(tokens[k + 1]) + "' 解析失败");
+            }
+            // 三者都是 display-referred，走同一个浮点 sRGB 解码（D5 / Ruling 52）。
+            const LinearColor lin = srgbToLinear(LinearColor{rgb[0], rgb[1], rgb[2]});
+            if (dir == "Kd") mats[cur].diffuse = lin;
+            else if (dir == "Ka") mats[cur].ambient = lin;
+            else mats[cur].specular = lin;
+            continue;
+        }
+
+        if (dir == "Ns" || dir == "d" || dir == "Tr") {
+            if (tokens.size() < 2)
+                return fail(lineTag(lineNo) + std::string(dir) + " 需要 1 个数字参数");
+            float v;
+            if (!parseFloat(tokens[1], v))
+                return fail(lineTag(lineNo) + std::string(dir) + " 的数字参数 '" +
+                            std::string(tokens[1]) + "' 解析失败");
+            if (dir == "Ns") mats[cur].shininess = v;        // 原样存，语义归 M6
+            else if (dir == "d") mats[cur].opacity = v;      // d 是 opacity
+            else mats[cur].opacity = 1.0f - v;               // Tr 是 transparency，方向相反（Ruling 52）
+            continue;
+        }
+
+        if (dir == "map_Kd") {
+            // D17 状态机：开头的 -选项 连同参数一起丢，第一个非 - token 起重拼成文件名。
+            size_t i = 1;
+            while (i < tokens.size() && !tokens[i].empty() && tokens[i][0] == '-') {
+                const std::string_view opt = tokens[i];
+                ++i;
+                ++stats.optionTokensSkipped;
+                const int arity = optionArity(opt);
+                if (arity >= 0) {
+                    for (int k = 0; k < arity && i < tokens.size(); ++k) {
+                        ++i;
+                        ++stats.optionTokensSkipped;
+                    }
+                } else {
+                    warnings.push_back(lineTag(lineNo) + "map_Kd 未知选项 '" + std::string(opt) + "'");
+                    if (i < tokens.size() && startsWithDigit(tokens[i])) {
+                        ++i;
+                        ++stats.optionTokensSkipped;
+                    }
+                }
+            }
+            if (i >= tokens.size())
+                return fail(lineTag(lineNo) +
+                            "map_Kd 之后没有文件名（只有 -s 等选项是真实导出器的常见形状，但缺了文件名）");
+            mats[cur].diffuseMap = joinFrom(tokens, i);
+            continue;
+        }
+
+        // 未知指令：D3 忽略 + 计数 + 警告，不是错误。
+        ++stats.unrecognized;
+        warnings.push_back(lineTag(lineNo) + "未知材质属性 '" + std::string(dir) + "'");
+    }
+
+    out = std::move(mats);
+    return true;
+}
+
+}  // namespace sr
