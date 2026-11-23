@@ -1,7 +1,17 @@
 # M5 设计 — OBJ / MTL 导入，以及"两个错误互相抵消"
 
 产品方 2026-11-22 说"你来决策"⇒ 本文里的 19 条 **D-nn 都是我（builder）的裁决**，
-每条附理由与代价（D15–D18 是 fresh-context 评审回来后补的）。spec §7.5 与 §8 已经定死的东西（解析子集、fit 数值、多 material → 多 draw call、
+每条附理由与代价（D15–D18 是 fresh-context 评审回来后补的）。
+
+**关于文内的 `文件:行号` 引用（终审后补的告示，Ruling 79）**：本文写于 M5 开工**之前**，
+所以每一处行号都是**设计时的快照**，而实施本身会把它们冲掉。M5.8 评审抓出三处过期后，
+我对全文做了一次机械扫描（抽出所有 `file:line` 并把那一行的实际内容打出来对），
+共更正 8 处：`texture.h:55→75`、`image_stb.cpp:41→82`、`CMakeLists.txt:127→142`、
+`CMakeLists.txt:154-157→169-171`、`CMakeLists.txt:164→181`（并记下 M5.6 为拖放补了 `shell32`）、
+`tests/main.cpp:20→64-65`，另有两处（`main.cpp:230`/`:246` 的 `--obj` 占位提示）
+**不是行号漂移而是那句话已被实现取代**，就地标注而不是改成一个新行号 ——
+把一个已经不存在的陈述改指到另一行，是比过期更糟的错。
+教训与本文 D5 的纠正同源：**引用要连内容一起核，不能只核文件还在不在。**spec §7.5 与 §8 已经定死的东西（解析子集、fit 数值、多 material → 多 draw call、
 程序生成验收模型以避免外部资产许可问题）**原样继承，不重开**。
 
 权威上游：[`2026-11-21-soft-raster-design.md`](2026-11-21-soft-raster-design.md) §5（C1–C8）、
@@ -11,7 +21,8 @@
 
 ## 1. 这一章要什么
 
-`--obj` 现在只打印一句"从 M5 开始生效"（`src/app/main.cpp:230`、`:246`）。M5 让它变成真的：
+`--obj` 现在只打印一句"从 M5 开始生效"（设计时位于 `src/app/main.cpp:230`、`:246`；
+**M5.6 已实现，这两处占位提示已删除**，所以这两个行号在今晚的树上找不到那句话）。M5 让它变成真的：
 命令行给一个 OBJ 路径，窗口里**立刻看到这个模型**，不管它的单位是 mm 还是 m、有没有法线、
 带几张 PNG 贴图、分几个材质。同时把"M5 之前不存在的三件事"落地：
 
@@ -25,9 +36,9 @@ M5 有**三处独立的方向约定**要从文件格式翻译到我们的管线�
 
 | 约定 | 文件里怎么说的 | 我们怎么表示 | 翻译发生在 |
 |---|---|---|---|
-| `vt` 的 v 轴 | v=0 是**图片下边缘**（OBJ 惯例） | v 正方向是**往下**（`texture.h:55`） | obj 解析器 |
+| `vt` 的 v 轴 | v=0 是**图片下边缘**（OBJ 惯例） | v 正方向是**往下**（`texture.h:75`） | obj 解析器 |
 | TGA 的行序 | header bit5 决定 origin 在上还是下 | 一律 top-down（C8） | tga 解析器 |
-| PNG/JPG 的行序 | 总是 top-down | top-down | `image_stb.cpp:41`（显式关掉了 stb 的翻转） |
+| PNG/JPG 的行序 | 总是 top-down | top-down | `image_stb.cpp:82`（显式关掉了 stb 的翻转） |
 
 前两条**都是翻一次行**（`mesh.cpp:51-52` 里已经立着一条契约：那一次 `v = 1 - v` 由 M5 的载入器负责，
 "格式的差异在格式的门口处理掉，不留进管线"）。于是出现本项目到目前为止最危险的一类假通过：
@@ -103,7 +114,7 @@ level 0 采样与 mip 链生成（`downsampleBox2` 用 int 累加）在互补的
 `loader/obj.*` 与 `loader/mtl.*` 进 `soft_raster_core`（纯文本 → 纯数据，零 IO，零 stb 感知），
 `loader/model.*`（把 OBJ + MTL + 贴图文件拼成一个可画的 Model）进 `soft_raster_loader`。
 理由：**"一个 OBJ + 它的 MTL + 它的 PNG"必须在同一处合成，而那处需要 stb；
-而 `tests` 链 core + loader、不链 app（`CMakeLists.txt:127`）**。
+而 `tests` 链 core + loader、不链 app（`CMakeLists.txt:142`）**。
 所以装配层落在 loader 是"端到端可测"与"C2 守得住"的唯一交集。
 代价：两个 target、一次额外的头文件层次约定；`src/loader/` 这个目录跨两个 target
 （**已有先例**：`bmp_writer.cpp` 在 `src/loader/` 却属于 core，`CMakeLists.txt:27` ⇒ 目录 ≠ target）。
@@ -116,7 +127,7 @@ grep 守卫（`grep -rn stb_image src/` 只命中 `image_stb.*`）不再能一�
 按材质复制一份，且**丢掉了"一个 index buffer + N 次提交"这个 M5 想教的东西**；
 M8 的 binning 需要看到"整模型的索引域"才能分箱。排除。
 
-**D. 装配放 app**：app 不被 `tests` 链接（`CMakeLists.txt:154-157`），端到端加载路径不可测。排除。
+**D. 装配放 app**：app 不被 `tests` 链接（`CMakeLists.txt:169-171`），端到端加载路径不可测。排除。
 
 ## 7. 数据模型
 
@@ -236,7 +247,7 @@ OBJ 的顶点是 `(v, vt, vn)` **三元组**，同一个几何顶点在不同面
 
 **D9（裁决）`vt` 的翻转发生在解析器的最后一行**：`uvOut = { u, 1.0f - v }`。
 不放 sampler（会把文件格式知识漏进采样器）、不放 mesh gen（会破坏 M4 golden 已钉死的约定：
-`texture.h:55` "v 的正方向是往下"）。代价：读 OBJ 文件时看到的 v 与内存里的 v 是反的，
+`texture.h:75` "v 的正方向是往下"）。代价：读 OBJ 文件时看到的 v 与内存里的 v 是反的，
 所以那一行必须有注释 + 有测试（§10 的锚 1）。
 
 **D10（裁决）面方向（winding）**：OBJ 的 `f` 顶点按**从正面看逆时针**排列，
@@ -310,7 +321,9 @@ OBJ 的顶点是 `(v, vt, vn)` **三元组**，同一个几何顶点在不同面
    这一点与 spec §7.5 的"golden 与性能测量都用 fit 后的确定性相机"冲突，是**有意的偏离**，
    裁决与代价见 D15。
 
-**D14（裁决）committed 资产只有三样，且全部由仓库内代码生成**（spec §7.5：不含外部资产许可问题）：
+**D14（裁决）committed 资产只有三样，且全部在仓库内创作**（spec §7.5：不含外部资产许可问题）。
+**"由代码生成"只对 `checker.tga` 成立** —— 两份 OBJ 是**手写**的（M5.8 评审指出我原来的
+"全部由仓库内代码生成"这个标题与下面这张表自相矛盾，而 notes 忠实地继承了这个错）：
 
 | 资产 | 来源 |
 |---|---|
@@ -482,7 +495,8 @@ D12 只守到 loader 门口。`--obj` 走 **narrow argv**，而产品方实际�
    `MultiByteToWideChar(CP_UTF8, ...)`，约 8 行。**全仓库只有这一处做这个转换**，
    `WM_DROPFILES` 拿到的宽字符路径也走同一个入口。
 4. `main.cpp:379` 那句"由调用方决定"删掉，换成"argv 已在 main 开头统一成 UTF-8"。
-分层干净：转换在 **app**（C4 只绑 core，`user32` 已链，`CMakeLists.txt:164`），
+分层干净：转换在 **app**（C4 只绑 core，`user32` 已链，`CMakeLists.txt:181`；
+M5.6 为拖放又补了 `shell32`，因为 `DragAcceptFiles`/`DragQueryFileW` 在那儿），
 loader 收 `std::filesystem::path`（D12），两边都不脏。
 代价：`nativePath` 是 Win32 的，**不可单测** ⇒ 它必须留在 8 行内且只做一件事，
 而可测的两半各有测试（loader 的中文目录、cmdline 的 ASCII）。argv 那一半由 M5.6 的肉眼门兜底：
@@ -506,7 +520,7 @@ loader 收 `std::filesystem::path`（D12），两边都不脏。
 
 | # | 任务 | 可见成果 |
 |---|---|---|
-| M5.0 | `tests/main.cpp:20` 退出码夹到 1（deferred #8）；`FrameStats::drawCalls` + `drawRange`（`draw` 转非虚包装） | 三侧全绿、约 28 处调用点源码不动、两份 golden 逐字节不变（**这一步的任务就是"证明重构没改任何东西"**） |
+| M5.0 | `tests/main.cpp:20` 退出码夹到 1（deferred #8；实施后该行随 CRT 硬化下移到 `:64-65`）；`FrameStats::drawCalls` + `drawRange`（`draw` 转非虚包装） | 三侧全绿、约 28 处调用点源码不动、两份 golden 逐字节不变（**这一步的任务就是"证明重构没改任何东西"**） |
 | M5.1 | `loader/mtl.*`：文本 → `Material`；`Kd/Ka/Ks` 浮点 sRGB 解码（`color.h` 加 `srgbToLinear(float)`）；`d/Ns` 存而不用；未知属性计数（D3）；`map_Kd` 选项状态机（D17） | 纯单测 |
 | M5.2 | `loader/obj.*`：文本 → `Model`，D6–D10 + **D14 续第 2 条的七项病理标本**（含锚 1） | 纯单测（内联字符串夹具，无 IO）；每项过变异验证 |
 | M5.3 | `writeTga`（故意 bottom-up）+ `--emit-checker-tga` + `checker.tga`（锚 2）+ `image_stb` 的 `stbi_info` 先问后分配（D13）+ loader 侧中文目录（D12） | 锚 1、锚 2 **各自**变红过（不是只红合成那一条） |
