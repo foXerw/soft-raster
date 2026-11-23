@@ -89,7 +89,10 @@ sha256sum assets/tga/checker.tga   # 应等于上表那串
   （x<110 && y<12）。**不新增参考图**（收紧 2）：少一张参考图就少一个"重新生成后一切正常"
   的失败面。姿态用 M4 固定 pose（Ruling D15），HUD 写 `GOLDEN M5 320X180`（与 M4 同长度差一个字）。
 - 人眼查看入口：`soft-raster --obj assets/obj/cube.obj --golden-write-obj <path.bmp>`
-  （独立 flag、必须配 `--obj`，Ruling 38）；notes 图在 `docs/notes/img/m5-obj-cube.bmp`。
+  （独立 flag、必须配 `--obj`，Ruling 38）；notes 图在 `docs/notes/img/m5-obj-cube.png`。
+  那张 PNG 是**文档插图**（由 BMP 一次性转换而来，与 M0–M4 的 notes 图同格式），**不是回归资产**：
+  锚 3 的比对在测试里进程内做、对着 `assets/golden/m4_textured_cube.bmp`，不新增参考图（收紧 2）。
+  项目不引入 PNG 编码器（编码导出是 spec §7.4 的明确非目标），转换只是本机一次性脚本。
 - 行尾 LF（`.gitattributes` 的 `*.obj`/`*.mtl text eol=lf`）；提交后复核无 CR。
 - **纪律**：锚 1/3 变红时先修文件或查翻转，**不许**改解析器来就文件（M5.2 已钉死解析器）、
   不许加宽容差/加宽 HUD 矩形、不许重生成 M4 参考图。
@@ -97,6 +100,7 @@ sha256sum assets/tga/checker.tga   # 应等于上表那串
   （关 mip 的两帧 md5 相同），但 mip 路径的浮点舍入留下 **3 个 ±1 像素** —— 零容差的锚 3
   仍红，±1 容差则会放过抵消帧（锚 1/2 各自红）。设计 §1 的"抵消后画面完全正确"按此修订：
   肉眼正确、±1 容差下正确，**逐字节不正确**。这不是放松合成检查的许可，是零容差的又一条理由。
+  **抵消的判别只能靠锚 1/2；锚 3 在 ③ 下的红是舍入残差，换编译器或 M9 SIMD 后可能消失，不可依赖。**
 
 ## 生成提交
 
