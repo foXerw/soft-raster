@@ -295,4 +295,25 @@ SR_TEST(scene_load_rejects_a_non_obj_extension_with_an_error_line) {
     SR_ASSERT(s.model != nullptr);
     if (s.model) SR_ASSERT_EQ(s.model->model.mesh.triangleCount(), 1);
     SR_ASSERT(s.errorLine.empty());
+    // P26：坏后缀的拖放不许覆盖 R 的重试路径 —— requested 仍指最后一个好模型。
+    // 变异：把 requested = obj 挪回 load 入口（后缀守卫之前）⇒ 这里变成 model.txt ⇒ 红。
+    SR_ASSERT_FALSE(s.load(dir.p / "model.txt"));
+    SR_ASSERT(s.requested == dir.p / "UP.OBJ");
+}
+
+SR_TEST(scene_load_rejects_an_empty_path_with_its_own_message) {
+    // P27：nativePath/utf8FromWide 转换失败返回 {}；若报"只支持 .obj"会把**编码**失败
+    // 误归因成**后缀**错误。空路径有自己的消息，且不进 R 的重试路径、不丢旧模型。
+    // 变异：删空路径分支 ⇒ load({}) 落到后缀守卫 ⇒ errorLine 含 ".obj"、不含"空" ⇒ 红。
+    TempDir dir("m5fix_empty");
+    writeText(dir.p / "a.obj", kOneTriObj);
+    app::SceneState s;
+    SR_ASSERT(s.load(dir.p / "a.obj"));
+    SR_ASSERT_FALSE(s.load(fs::path{}));
+    SR_ASSERT_FALSE(s.errorLine.empty());
+    SR_ASSERT(s.errorLine.find("空") != std::string::npos);   // 自己的消息
+    SR_ASSERT(s.errorLine.find(".obj") == std::string::npos); // 不是后缀错误
+    SR_ASSERT(s.model != nullptr);   // 旧模型保留
+    if (s.model) SR_ASSERT_EQ(s.model->model.mesh.triangleCount(), 1);
+    SR_ASSERT(s.requested == dir.p / "a.obj");   // 重试路径不被空请求覆盖
 }

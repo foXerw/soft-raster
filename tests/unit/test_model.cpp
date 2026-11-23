@@ -679,3 +679,84 @@ SR_TEST(model_warning_print_is_capped_at_eight_but_hud_total_is_preserved) {
     SR_ASSERT_EQ(nine.size(), 9);
     if (nine.size() == 9) SR_ASSERT(nine[8].find("还有 1 条同类警告") != std::string::npos);
 }
+
+// ---- 终审 I1：MTL 未知属性计数并进 HUD 可见总数 ------------------------------
+
+SR_TEST(model_hud_total_merges_mtl_and_obj_unknown_directives) {
+    // I1（整枝唯一的跨任务缺陷）：MtlStats 被产出后丢弃 —— HUD 的 UNRECOGNIZED n 读
+    // ObjStats::unrecognized，parseObj 只计 OBJ 指令，于是 female02 的 44 条警告
+    // （MTL 12 + OBJ 32）在 HUD 上只显示 32。修法：loadModel 在 parseObj 之前把
+    // mtlStats.unrecognized 并进 out.stats（parseObj 累加不重置，已核对）。
+    // 夹具：MTL 2 条未知属性（Ni/illum）+ OBJ 3 条未知指令（s/s/vp）⇒ 合计 5。
+    // 两半计数不同（2≠3）：漏并哪一半都红，且数值能点名漏的是哪一半（trap (a)）。
+    // map_Kd -s 1 1 1 跳过 4 个选项 token 但零警告：它们是已知选项、不是未知指令，
+    // **不许**膨胀总数（若把 optionTokensSkipped 也并进来 ⇒ 9 ⇒ 红）—— 口径分界钉在这里。
+    TempDir dir("m5fix_i1");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl mat\nf 1 2 3\n"
+              "s 1\ns off\nvp 0 0\n");
+    writeText(dir.p / "m.mtl",
+              "newmtl mat\nKd 1 1 1\nNi 1.5\nillum 2\nmap_Kd -s 1 1 1 tex.tga\n");
+    SR_ASSERT(writeSolidTga(dir.p / "tex.tga", 2, 2, 1, 2, 3, 255));
+
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(dir.p / "a.obj", m, err);
+    SR_ASSERT(ok);
+    if (!ok) std::printf("[model] I1 夹具载入失败: %s\n", err.c_str());
+    SR_ASSERT_EQ(m.stats.unrecognized, 5);   // 2 MTL + 3 OBJ；修前 3，误并选项 9
+}
+
+// ---- 终审 M1/P21：drawModel 的槽位界检查 ------------------------------------
+
+SR_TEST(draw_model_treats_an_out_of_range_texture_slot_as_untextured) {
+    // P21：g.material 对 materials.size() 做了界检查，slot 却没人对 textures.size() 检查。
+    // loadModel 今天走不到（平行 vector），但冻结不变式只禁 textures 增长、不禁 public
+    // vector 失配（M8 binning 消费它们）。夹具：Kd 红 + 蓝贴图，载入后手动把 slot 改越界
+    // ⇒ 必须退回 Kd 红（不崩、不读蓝）。变异：把守卫改成"slot 夹到最后一张贴图"⇒ 像素
+    // 变蓝 ⇒ 红（断言级；直接删守卫是 Debug 越界 abort，不是证据，Ruling 57）。
+    TempDir dir("m5fix_slot");
+    writeText(dir.p / "a.obj",
+              "mtllib m.mtl\nv -0.5 -0.5 0.5\nv 0.5 -0.5 0.5\nv 0 0.5 0.5\nusemtl mat\nf 1 2 3\n");
+    writeText(dir.p / "m.mtl", "newmtl mat\nKd 1 0 0\nmap_Kd tex.tga\n");
+    SR_ASSERT(writeSolidTga(dir.p / "tex.tga", 2, 2, 0, 0, 255, 255));
+    sr::LoadedModel m;
+    std::string err;
+    SR_ASSERT(sr::loadModel(dir.p / "a.obj", m, err));
+    SR_ASSERT_EQ(m.textures.size(), 1);
+    if (m.texturePerMaterial.size() == 1) m.texturePerMaterial[0] = 5;   // 故意失配
+
+    Canvas c{kW, kH};
+    c.rt.color.clear(kBg);
+    sr::BackendA backend;
+    sr::FrameStats s;
+    sr::drawModel(backend, m, c.rt, identityVu(), baseFu(), &s);
+    SR_ASSERT_EQ(s.drawCalls, 1);   // 坏槽位只丢贴图，不丢整个组
+    SR_ASSERT_EQ(c.rt.color.readPacked(32, 37), sr::encodeSRGB(sr::LinearColor{1, 0, 0}));
+}
+
+// ---- 终审 M2：文本大小上限（先问再分配）------------------------------------
+
+SR_TEST(model_rejects_an_oversized_text_file_before_allocating) {
+    // M2：readWholeFile 原先 resize(len) 无上限无 catch —— 多 GB OBJ 抛 bad_alloc 没人接
+    // ⇒ app terminate，违反加载器"false + err"契约。现在 kMaxModelTextBytes 先问再分配。
+    // 夹具：'#' 开头 + seekp 到上限 + 写一个换行 ⇒ 文件大小 cap+1（NTFS/ext4 都支持，
+    // 实测 ~0.3s）。内容是一整行注释：万一上限被删/抬高，parseObj 也只扫一行注释就结束，
+    // 变异运行不会陷入 256 MiB 的未知指令警告洪水（trap (b) 的另一种形态）。
+    TempDir dir("m5fix_textcap");
+    const fs::path big = dir.p / "big.obj";
+    {
+        std::ofstream f(big, std::ios::binary);
+        f.write("#", 1);
+        f.seekp(static_cast<std::streamoff>(sr::kMaxModelTextBytes));
+        f.write("\n", 1);
+    }
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(big, m, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT_FALSE(err.empty());
+    if (err.find("kMaxModelTextBytes") == std::string::npos)
+        std::printf("[model] 超限 err 是：%s\n", err.c_str());
+    SR_ASSERT(err.find("kMaxModelTextBytes") != std::string::npos);   // 常量名可归因（D13 同款）
+}

@@ -25,7 +25,8 @@ struct Material {
     LinearColor ambient{0.0f, 0.0f, 0.0f};   // Ka：M5 存而不用，M6 的环境光项
     LinearColor specular{0.0f, 0.0f, 0.0f};  // Ks：M6
     float shininess = 0.0f;                  // Ns：**原样存**（MTL 的 0–1000 指数），语义归 M6
-    // d / Tr：M5 存而不用（FragmentOutput 无 alpha 通路，deferred #4）。方向见 parseMtl 注释。
+    // d / Tr：M5 存而不用（FragmentOutput 无 alpha 通路，deferred #4）。方向见 parseMtl 注释
+    // （Ruling 52）；范围在解析时夹到 [0,1]（终审 M9）。M6 消费时必须重审语义，不是照单全收。
     float opacity = 1.0f;
     std::string diffuseMap;                  // map_Kd 的**文件名**；core 不知道像素（C2）
 };

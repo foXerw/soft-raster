@@ -35,11 +35,21 @@ const sr::Mesh& fallbackCube() {
 }
 
 bool SceneState::load(const std::filesystem::path& obj) {
-    requested = obj;   // R 重载"同一个 path"；失败后也能重试（修好文件再按 R）
+    // 空路径单独成一类错误（终审 M3/P27）：nativePath/utf8FromWide 转换失败时返回 {}，
+    // 若落到后缀守卫会报"只支持 .obj"——把**编码**失败误归因成**后缀**错误。空路径不过
+    // 后缀守卫、也不进 R 的重试路径（它不是一个可重试的请求）。
+    if (obj.empty()) {
+        errorLine = "路径为空（编码转换失败或未给出路径）";
+        return false;
+    }
     if (!hasObjExtension(obj)) {
         errorLine = sr::lex::displayPath(obj) + ": 只支持 .obj 模型";
         return false;
     }
+    // 只有**可信的请求**才进 R 的重试路径（终审 M4/P26）：坏后缀的拖放若覆盖 requested，
+    // R 会永远重试那个 .txt 而不是最后一个好模型。真正的载入失败（文件缺失/内容坏）仍更新
+    // requested —— "修好文件再按 R"对那种失败成立（后缀不会自己变好，内容会）。
+    requested = obj;
     // **先建新的再换指针**（绝不先 model.reset()）：失败时 fresh 直接丢弃，
     // 旧模型原样留在画面上 —— "失败保留旧模型"不是靠回滚，是靠根本没动过旧的。
     auto fresh = std::make_unique<sr::LoadedModel>();

@@ -15,7 +15,9 @@ struct ImageRGBA8 {
 };
 
 // 纹理单边上限（D13）。加载器必须在**分配之前**拿文件头问一次尺寸：
-// image_stb 用头探测（只读头部、不解码），TGA 侧对应 tgaPayloadFits 的长度下界。
+// image_stb 用头探测（只读头部、不解码）；TGA 侧由 parseTga 自带同款单边上限
+// （image_tga.cpp，Ruling 63 起两条路径对称），也在分配之前问。tgaPayloadFits 是另一件事——
+// payload 长度下界（文件字节够不够声称的像素），与单边上限各守各的，不互相替代。
 // 一个几十字节的头不该换走一次巨额分配 —— 8192x8192x4 = 256 MiB，而 M5 要载入
 // 用户从网上下载的图片。错误消息里必须带上这个值，用户才知道该把图缩到多大。
 inline constexpr int kMaxTextureSide = 4096;

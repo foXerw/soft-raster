@@ -58,6 +58,9 @@ SR_TEST(mtl_parses_kd_as_srgb_encoded_display_value) {
 SR_TEST(mtl_parses_ka_ks_ns_d_and_tr) {
     // Ka/Ks 与 Kd 用同一个浮点解码（三者都是 display-referred）；Ns 原样存；
     // d 是 opacity、Tr 是 transparency，方向相反（Ruling 52）：d 0.3 == Tr 0.7。
+    // 范围（终审 M9）：越界的 d/Tr 在解析时夹到 [0,1] —— d 2.0 ⇒ 1.0、d -0.5 ⇒ 0.0、
+    // Tr -0.5 ⇒ 1-(-0.5)=1.5 ⇒ 1.0。方向与范围各钉各的：删 clamp 会让越界三条红，
+    // 而 Ruling 52 的方向断言（d 0.3 == Tr 0.7）不受影响。M6 消费时须重审语义（mtl.h 注释）。
     const ParseResult r = parse(
         "newmtl m\n"
         "Ka 0.1 0.2 0.3\n"
@@ -65,9 +68,12 @@ SR_TEST(mtl_parses_ka_ks_ns_d_and_tr) {
         "Ns 250\n"
         "d 0.3\n"
         "newmtl t\n"
-        "Tr 0.7\n");
+        "Tr 0.7\n"
+        "newmtl hi\nd 2.0\n"
+        "newmtl lo\nd -0.5\n"
+        "newmtl trneg\nTr -0.5\n");
     SR_ASSERT(r.ok);
-    SR_ASSERT_EQ(r.out.size(), 2);
+    SR_ASSERT_EQ(r.out.size(), 5);
     // 参照值用生产解码函数算：float 解码本身已由 test_color 独立钉过 IEC 中点，
     // 这里要钉的是"Ka/Ks 确实路由进了解码"，而不是把原始 0.1 直接存进去。
     SR_ASSERT_NEAR(r.out[0].ambient.r, sr::srgbToLinear(0.1f), 1e-5f);
@@ -79,6 +85,13 @@ SR_TEST(mtl_parses_ka_ks_ns_d_and_tr) {
     SR_ASSERT_NEAR(r.out[0].shininess, 250.0f, 1e-5f);  // Ns 原样，0–1000 指数
     SR_ASSERT_NEAR(r.out[0].opacity, 0.3f, 1e-5f);      // d X ⇒ opacity = X
     SR_ASSERT_NEAR(r.out[1].opacity, 0.3f, 1e-5f);      // Tr X ⇒ opacity = 1 - X
+    // 范围夹钳（M9）：越界值不许原样存（d 2.0 存成 2.0 会让 M6 的 blend 拿到非法 alpha）。
+    // SR_ASSERT 失败不中止：out 被清空时继续索引就是越界（trap (b)），先守住尺寸再取。
+    if (r.out.size() == 5) {
+        SR_ASSERT_NEAR(r.out[2].opacity, 1.0f, 1e-6f);      // d 2.0 ⇒ clamp 1
+        SR_ASSERT_NEAR(r.out[3].opacity, 0.0f, 1e-6f);      // d -0.5 ⇒ clamp 0
+        SR_ASSERT_NEAR(r.out[4].opacity, 1.0f, 1e-6f);      // Tr -0.5 ⇒ 1.5 ⇒ clamp 1
+    }
 }
 
 SR_TEST(default_material_is_white_not_gray) {
@@ -208,7 +221,7 @@ SR_TEST(mtl_map_kd_without_filename_is_error) {
     SR_ASSERT_FALSE(bare.ok);
     SR_ASSERT(bare.out.empty());
     SR_ASSERT(!bare.err.empty());
-    SR_ASSERT(bare.err.find("2") != std::string::npos);  // 行号
+    SR_ASSERT(bare.err.find("第 2 行") != std::string::npos);  // 行号（P4：裸 "2" 出现在哪都算过）
 
     // 只有选项没有文件名：真实导出器的常见形状，但缺了文件名仍是错误（Review Focus 2）。
     const ParseResult optsOnly = parse(
@@ -254,7 +267,7 @@ SR_TEST(mtl_bad_number_is_error_with_line_number) {
     SR_ASSERT_FALSE(r.ok);
     SR_ASSERT(r.out.empty());
     SR_ASSERT(!r.err.empty());
-    SR_ASSERT(r.err.find("2") != std::string::npos);
+    SR_ASSERT(r.err.find("第 2 行") != std::string::npos);  // P4：钉整段行号标签，不是裸数字
     SR_ASSERT(r.err.find("abc") != std::string::npos);  // 肇事 token
 }
 
@@ -265,4 +278,74 @@ SR_TEST(mtl_strips_utf8_bom) {
     SR_ASSERT_EQ(r.out.size(), 1);
     SR_ASSERT(r.out[0].name == "m");
     SR_ASSERT_EQ(r.stats.unrecognized, 0);
+}
+
+// ---- 终审 P4：四条 D6 守卫此前无测试（删掉任何一条 387 用例仍全绿）----
+// 变异纪律（Ruling 57 / trap (b)）：直接删守卫会让错解落在表外（mats[-1] / tokens 越界），
+// MSVC Debug 当场 abort，拿不到断言级红 —— 那不是证据。所以变异用"守卫做出另一种合法决策"
+// （D6 降级成 D3：警告 + 继续），错解落在表内，给出断言级红。每条注明。
+
+SR_TEST(mtl_known_attribute_before_newmtl_is_error_with_line_number) {
+    // D6 守卫：已知属性没有 newmtl 在前是结构性错误（没守卫就是 mats[-1] UB）。
+    // 夹具 Kd 在第 1 行：err 必须点名第 1 行与 newmtl。
+    // 变异：把该分支降级成 D3（警告 + continue）⇒ ok 变 true ⇒ 本条红（断言级）。
+    const ParseResult r = parse("Kd 1 0 0\n");
+    SR_ASSERT_FALSE(r.ok);
+    SR_ASSERT(r.out.empty());
+    SR_ASSERT(r.err.find("第 1 行") != std::string::npos);
+    SR_ASSERT(r.err.find("newmtl") != std::string::npos);
+}
+
+SR_TEST(mtl_unknown_directive_before_newmtl_is_warning_not_error) {
+    // P8 路由：**未知**指令在 newmtl 之前走 D3（忽略 + 计数 + 警告），不是 D6 ——
+    // 它污染不了一个尚不存在的材质。真实文件头部可能带散落属性，报错会白白毙掉它。
+    // 与上一条是一对方向相反的断言：已知→D6、未知→D3，路由分界两边各钉一条。
+    // 变异：把守卫扩成对所有指令生效（去掉 && known）⇒ 本条 ok 变 false ⇒ 红。
+    const ParseResult r = parse("Ni 1.5\nnewmtl m\nKd 1 1 1\n");
+    SR_ASSERT(r.ok);
+    SR_ASSERT_EQ(r.out.size(), 1);
+    SR_ASSERT_EQ(r.stats.unrecognized, 1);
+    SR_ASSERT_EQ(r.warnings.size(), 1);
+    if (!r.warnings.empty())
+        SR_ASSERT(r.warnings[0].find("第 1 行") != std::string::npos);
+}
+
+SR_TEST(mtl_missing_numeric_argument_is_error_with_line_number) {
+    // D6 守卫：已知指令缺数字参数 ⇒ false + out 清空 + err 点名行号。
+    // Kd 要 3 个（只给 2）、d 要 1 个（一个不给），两种形状各一次。
+    // 变异：把 arity 失败降级成 D3（警告 + continue）⇒ ok 变 true ⇒ 本条红。
+    // （直接删 arity 检查会越界读 tokens，Debug abort，不是断言级证据。）
+    const ParseResult kd = parse("newmtl m\nKd 0.5 0.5\n");
+    SR_ASSERT_FALSE(kd.ok);
+    SR_ASSERT(kd.out.empty());
+    SR_ASSERT(kd.err.find("第 2 行") != std::string::npos);
+    const ParseResult d = parse("newmtl m\nd\n");
+    SR_ASSERT_FALSE(d.ok);
+    SR_ASSERT(d.out.empty());
+    SR_ASSERT(d.err.find("第 2 行") != std::string::npos);
+}
+
+SR_TEST(mtl_trailing_garbage_in_number_is_error_with_line_number) {
+    // lex::parseFloat 必须整 token 消费："0.5abc" —— from_chars 能解出 0.5，但尾随 abc
+    // 必须让整 token 失败（r.ptr != last），不是静默取 0.5。夹具只有这道守卫能拒它
+    // （arity 够、其余 token 合法）：删 ptr 检查 ⇒ ok 变 true ⇒ 本条红（断言级）。
+    const ParseResult r = parse("newmtl m\nKd 0.5abc 0 0\n");
+    SR_ASSERT_FALSE(r.ok);
+    SR_ASSERT(r.out.empty());
+    SR_ASSERT(r.err.find("第 2 行") != std::string::npos);
+    SR_ASSERT(r.err.find("0.5abc") != std::string::npos);  // 肇事 token 原样进 err
+}
+
+SR_TEST(mtl_non_finite_number_is_error_with_line_number) {
+    // lex::parseFloat 拒非有限值：from_chars 接受 inf/nan，isfinite 必须挡住 ——
+    // NaN/inf 进了 opacity/坐标是延迟故障（Ruling 52）。用 d/Ns（原样存、无下游计算），
+    // 夹具只触发 isfinite 守卫：删它 ⇒ ok 变 true ⇒ 本条红（断言级）。
+    const ParseResult inf = parse("newmtl m\nd inf\n");
+    SR_ASSERT_FALSE(inf.ok);
+    SR_ASSERT(inf.out.empty());
+    SR_ASSERT(inf.err.find("第 2 行") != std::string::npos);
+    const ParseResult nan = parse("newmtl m\nNs nan\n");
+    SR_ASSERT_FALSE(nan.ok);
+    SR_ASSERT(nan.out.empty());
+    SR_ASSERT(nan.err.find("第 2 行") != std::string::npos);
 }

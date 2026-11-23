@@ -2,7 +2,7 @@
 
 里程碑产出：`--obj <path>` 把任意外部 OBJ（含 MTL 与 PNG/JPG/TGA 贴图）载入窗口并立刻可见，
 不管单位是 mm 还是 m；多 material → 多 draw call（`FrameStats::drawCalls` 可断言）；
-包围球自动 fit 相机；中文路径能载入。三处方向约定各有独立的锚，387 个用例三侧全绿。
+包围球自动 fit 相机；中文路径能载入。三处方向约定各有独立的锚，396 个用例三侧全绿。
 
 ![M5 OBJ golden](img/m5-obj-cube.png)
 
@@ -114,9 +114,11 @@ abort、拿不到"红了哪几条"，所以夹具要让错解落在表内，给�
 **目录 ≠ target**，这有先例：`bmp_writer.cpp` 住在 `src/loader/` 却属于 core（`CMakeLists.txt:27`）。
 所以"文件在哪个目录"不回答"它链不链 stb"，只有 CMake 的源文件列表回答。
 
-**C2 的守卫是文本的，这件事本身咬过人**：M5.1 给 `mtl.h` 写注释时差点把字面量 `stb_image` 写进去，
-那会**当场触发执行 C2 的那条 grep**——注释里提一句第三方头，守卫就红。实现者自评审抓到了，
-现在 `mtl.h:7-8` 的注释绕开字面量（"core 不链 stb，那条第三方头的 grep 守卫仍只命中 image_stb.*"）。
+**C2 的守卫是文本的，这件事本身咬过人**：M5.1 给 `mtl.h` 写的初版注释里**确实**写了字面量 `stb_image`，
+执行 C2 的那条 grep（`grep -rn "stb_image" src/`）**当场**多命中了 mtl.h 一处——注释里提一句第三方头，
+守卫就红。这是 grep 守卫当场抓到的，不是事后想起的（一手记录：
+`.superpowers/sdd/2026-11-23-soft-raster-m5-obj/task-M5.1-report.md` §自评审发现）。
+修后 `mtl.h:7-8` 的注释绕开字面量（"core 不链 stb，那条第三方头的 grep 守卫仍只命中 image_stb.*"）。
 教训：**"core 不知道像素"这件事不能写在注释里，只能写在代码结构里**——注释是给人读的，
 grep 守卫是给机器读的，两者撞车时机器赢。代价：两个 target、一次额外的头文件层次约定；
 换来的是 C2 一眼可验、解析单测不必每次重编 stb 的七千行。
@@ -129,7 +131,8 @@ grep 守卫是给机器读的，两者撞车时机器赢。代价：两个 targe
 这是全栈唯一的一次 v 翻转（D9）。不放 sampler（会把文件格式知识漏进采样器）、不放 mesh gen
 （会破坏 M4 golden 钉死的 `texture.h` "v 正方向往下"约定）。缺 `vt` 的角不走这里（填 `(0,0)` 且不翻转，D7）。
 守门：锚 1 内联版（`test_obj.cpp` 的 `obj_flips_vt_because_obj_v_zero_is_the_image_bottom`）
-+ 资产版（§5）。代价：读 OBJ 文件看到的 v 与内存里的 v 是反的，所以那一行必须有注释 + 有测试。
++ 资产版（§1 的锚 1 行：`cube.obj` vs `makeCube`，`anchor1_cube_obj_parses_to_the_same_triangles_as_makeCube`）。
+代价：读 OBJ 文件看到的 v 与内存里的 v 是反的，所以那一行必须有注释 + 有测试。
 
 **(b) `map_Kd` 的选项 token：跳过取文件名，不是结构性错误（D17）。** 真实导出器天天写
 `map_Kd -s 1 1 1 brick.png`。规则：开头的 `-选项` 连同参数一起丢，第一个不以 `-` 开头的 token 起
@@ -156,8 +159,8 @@ grep 守卫是给机器读的，两者撞车时机器赢。代价：两个 targe
 数据纹理不该被解码）。**M5.1 的设计文档曾把这句话写反**（说"解码发生在 loader 的 makeTexture 里"），
 评审核对代码抓出来：`makeTexture` 在 **core** 的 `sampler.cpp`，按那句错话规划会得到**双重解码**
 （贴图整体压暗一档）或把 `makeTexture` 搬进 loader 砸掉 C2 分层。留这段是为了记住
-**"设计文档里关于既有代码的陈述也是待验证的断言"**——本里程碑这句话被证伪了六次（D5、D17 arity 表、
-D6 依赖方向、Ruling 56 变异预期、D16 包含断言、§10 锚 3 路径），规律记进 §6 末尾。
+**"设计文档里关于既有代码的陈述也是待验证的断言"**——本里程碑这条规律被**印证**了六次：六句设计文档
+陈述被下游证伪（D5、D17 arity 表、D6 依赖方向、Ruling 56 变异预期、D16 包含断言、§10 锚 3 路径），规律记进 §6 末尾。
 
 ## 5. 两条对 spec §7.5 的明文偏离
 
@@ -166,7 +169,7 @@ D6 依赖方向、Ruling 56 变异预期、D16 包含断言、§10 锚 3 路径�
 **(a) D15：golden 不用 fit 相机。** spec §7.5 定的是"golden **与**性能测量都用 fit 后的确定性相机"。
 锚 3 要的"逐字节等于 `m4_textured_cube.bmp`"与这句话**不可能同时成立**：同一个 1.6 立方体 fit 之后是
 `distance = 0.8√3 / sin30° ≈ 2.7713`、`near ≈ 0.001386`、`far ≈ 13.856`，而 M4 锚定姿态是
-`camZ = 5.0` + `rotX(0.43)·rotY(0.61)` + `near 0.1 / far 100`（`golden_scene.h`）——两张图毫无关系。
+`camZ = 5.0` + `rotX(0.43)·rotY(0.61)`（`golden_scene.h`）+ `near 0.1 / far 100`（`golden_scene.cpp:54`）——两张图毫无关系。
 裁决：**锚 3 保留 M4 姿态**。锚 3 的全部价值 = "与一张已被 M4 逐项验过的参考图零容差相同"；
 换成 fit 相机，它立刻退化成一张只能靠肉眼验收的新参考图（= 反目标 A2）。§7.5 那句话的真实意图是
 "性能数字必须可复现"，**那半句（性能测量用 fit 相机）照旧执行**。fit 的正确性本来有更强的守法（D16：
@@ -174,7 +177,8 @@ D6 依赖方向、Ruling 56 变异预期、D16 包含断言、§10 锚 3 路径�
 代价：spec 与实现之间多一条明文偏离 ⇒ 上游 spec §7.5 的 fit 句加脚注指向 D15。
 
 **(b) D14 续：资产清单推迟 sphere 与验收模型。** spec §7.5 的清单是"cube、sphere、验收模型 + 对应 golden BMP"。
-committed 资产只有三样且全部由仓库内代码生成（`checker.tga` / `cube.obj`+`mtl` / `twomats.obj`+`mtl`）。
+committed 资产只有三样，全部由**仓库内创作**（`checker.tga` 由仓库内代码生成；两份 OBJ 手写，
+provenance 见 `assets/obj/README.md`）——不含外部资产，无许可暴露。
 `sphere.obj` 与"验收模型"推迟到 M8：spec 同时要求验收模型**由程序生成**，而"committed 一个程序生成的 OBJ"
 需要先有 OBJ 导出器——那是设计 §3 明令的非目标；真塞一个 5–10 万三角形的文本模型进 git，
 仓库体积与 review diff 都会烂掉，而它守的东西 M8 才需要。曲面几何与去重的覆盖全部放进 M5.2 的
@@ -208,14 +212,16 @@ committed 资产只有三样且全部由仓库内代码生成（`checker.tga` / 
 `.superpowers/.../ext-model/`，不提交、不重分发）。M5.8 实测：**
 
 - **6233 三角形 / 11 组 / 3 贴图**（`--obj … --offscreen` 的载入行）。三个真实行为同时被验到：
-  ① **15 条 `usemtl` 相邻合并成 11 组**（awk 数 runs = 11，D4/收紧 3 的 batching 在非作者数据上成立）；
+  ① **15 条 `usemtl` 相邻合并成 11 组**（awk 数 runs = 11，spec §7.5 的"最小的 batching"在非作者数据上成立；
+  实现在 `obj.cpp:320`：只合并相邻的同材质 run，不重排）；
   ② **6 个材质、6 条 `map_Kd` 去重成 3 张贴图**（D11 的 canonical key 成立，两个材质共用一张 JPG）；
   ③ `Ni`/`illum`/`s` 全部走 D3"忽略+计数+警告"而非报错，`o`/`g` 被正确接受。
 - **警告洪水**：这份模型共 **44 条警告**（MTL 12 + OBJ 32）。不加上限就是 44 行打印；
   一份 10 万面、到处 `s 1`/`s off` 的模型会打上万行，症状是"程序像卡住了"（控制台 I/O 主导），
   真正的问题（载入成功）反而被埋掉。Ruling 75 的修法：每文件最多前 **8** 条 + 一条"…还有 M 条同类警告"
-  （`model.cpp:60` 的 `kMaxPrintedWarnings = 8`），实测打印收敛到 **18 行**（每文件 8+1），
-  **总数仍进 `stats.unrecognized`**（HUD 的 `UNRECOGNIZED n`），信息不丢。
+  （`model.cpp:77` 的 `kMaxPrintedWarnings = 8`），实测打印收敛到 **18 行**（每文件 8+1），
+  **总数仍进 `stats.unrecognized`**（MTL 的未知属性计数由 loadModel 并入同一总数，HUD 的
+  `UNRECOGNIZED n` 读的是 OBJ+MTL 合计），信息不丢。
   上限是**按文件**口径（P34）：多个 MTL 时总行数仍可 >9，"同类"可能混着不同种类——要改全局上限 = 改裁定。
 - 性能：Debug @640×360 实测 **20.9 ms/帧**（控制者 M5.6 测得 ~20 ms，一致）。
 

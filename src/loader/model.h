@@ -47,15 +47,24 @@ struct LoadedModel {
     Model model;                          // 几何 + 材质表 + 分组（parseObj 产出）
     std::vector<Texture> textures;        // 去重后的贴图，每条含完整 mip 链
     std::vector<int32_t> texturePerMaterial;  // 与 model.materials 平行；下标进 textures，-1 = 无贴图
-    ObjStats stats;                       // parseObj 的计数（loadModel 给全新对象，见下）
+    ObjStats stats;                       // parseObj 的计数 + loadModel 并入的 MTL 未知属性数（I1）；HUD 读它
     std::filesystem::path source;         // 载入用的 OBJ 路径（消息归因用）
     size_t texturesFrozenAt = 0;          // loadModel 成功末尾的 textures.size()；drawModel 入口守它（Ruling 66）
 };
 
+// 文本文件（OBJ/MTL）大小上限（终审 M2）。与 D13 贴图上限同一条"先问再分配"哲学：
+// readWholeFile 原先对 len 无上限也无 catch，一个多 GB 的 OBJ 会让 resize 抛 bad_alloc，
+// 而加载器的契约处处是"返回 false + err"，不是 terminate。256 MiB 的依据：软件光栅化 +
+// 逐像素三线性下，256 MiB 的 OBJ 已是千万三角形级，远超交互目标；真实模型（含满是 s 指令的
+// 10 万面模型）远在它之下。错误消息带常量名与值，可归因（D13 同款）。
+inline constexpr size_t kMaxModelTextBytes = 256u * 1024u * 1024u;   // 256 MiB
+
 // 读 OBJ → 扫 mtllib → 逐个读 MTL 并 parseMtl → parseObj → 每个非空 map_Kd 读贴图建纹理。
 // 成功 true；失败 false、out 清空、err 非空（带文件名/行号）。warnings 在本层打印到 stdout
 // （含文件名），因为这是唯一同时看得见"文件"与"文本"的一层（D3）。打印有上限：每个文件
-// 最多前 8 条 + 一条"… 还有 M 条同类警告"（Ruling 75）；总数不缩水，仍在 stats.unrecognized。
+// 最多前 8 条 + 一条"… 还有 M 条同类警告"（Ruling 75）；总数不缩水，仍在 stats.unrecognized
+// ——**含 MTL 那一半**：loadModel 把 MtlStats.unrecognized 并进 out.stats（终审 I1），
+// 所以这句话对 OBJ 与 MTL 两侧都成立。
 //
 // **路径解析**：mtllib 名字相对 **OBJ 所在目录**；map_Kd 文件名相对 **MTL 所在目录**
 // （Blender 的 apply 修改器常把贴图放在 mtl 旁边而非 obj 旁边）。去重键是

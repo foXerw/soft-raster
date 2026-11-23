@@ -216,6 +216,10 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 const UINT copied = DragQueryFileW(drop, 0, wide.data(), len + 1);
                 if (copied > 0 && copied <= len) {
                     wide.resize(copied);
+                    // 事件标记与路径分开（终审 M3）：转换失败时 droppedObj 为空，但事件
+                    // 发生过 —— main 凭 dropEvent 仍走 load，空路径拿到自己的错误消息，
+                    // 不静默忽略（A4）。
+                    in->dropEvent = true;
                     in->droppedObj = utf8FromWide(wide);
                 }
             }

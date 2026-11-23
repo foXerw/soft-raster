@@ -55,10 +55,14 @@ struct InputState {
     bool reloadModel = false;
     // M5.6：F = 显式重 fit（只动 distance/target/near/far，yaw/pitch 归用户，D15）。
     bool refit = false;
-    // M5.6：本帧拖放进来的模型路径（**UTF-8**；空 = 本帧没有拖放）。WM_DROPFILES 给的是
-    // UTF-16，win32_window.cpp 用 utf8FromWide 转成 UTF-8，main 用 nativePath 转原生路径
+    // M5.6：本帧拖放进来的模型路径（**UTF-8**）。WM_DROPFILES 给的是 UTF-16，
+    // win32_window.cpp 用 utf8FromWide 转成 UTF-8，main 用 nativePath 转原生路径
     // —— 与 --obj 走同一个 SceneState::load 入口（D18）。后缀守卫在 load 里（A4）。
+    // 注意：droppedObj 为空**不一定**是没拖放——转换失败时 utf8FromWide 也返回空。
+    // "本帧有没有拖放事件"由 dropEvent 单独标记，main 凭它决定走 load（空路径会拿到
+    // 自己的错误消息，响亮失败，不静默忽略 —— A4 / 终审 M3）。
     std::string droppedObj;
+    bool dropEvent = false;
     // M4 的两个采样旋钮（spec §7.6 的按键表把它们分开列，所以这里是两个事件而不是一个"切过滤"）。
     // `1` = mip 开关，`2` = nearest → bilinear → trilinear。两者正交（Ruling 31）：
     // "关 mip 但用三线性"是个合法组合，它的语义是"永远在 level 0 上做双线性"。

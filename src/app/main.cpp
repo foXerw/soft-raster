@@ -401,7 +401,9 @@ int runWindow(const app::AppOptions& o) {
         }
         // 拖放（M5.6）：shell 给的路径已在 win32_window.cpp 转成 UTF-8，这里经
         // nativePath 走与 --obj 完全相同的入口（后缀守卫在 SceneState::load，A4）。
-        if (!input.droppedObj.empty()) {
+        // 凭 dropEvent 而非 droppedObj 非空（终审 M3）：转换失败时 droppedObj 为空，
+        // 但事件发生过 —— 仍走 load，空路径拿到自己的错误消息，不静默忽略（A4）。
+        if (input.dropEvent) {
             loadObjIntoScene(scene, app::nativePath(input.droppedObj), target.color.width,
                              target.color.height);
         }

@@ -15,6 +15,12 @@ bool startsWithDigit(std::string_view tok) {
     return !tok.empty() && tok[0] >= '0' && tok[0] <= '9';
 }
 
+// opacity 范围守卫（终审 M9）：文件里的 d/Tr 可以越界（d 2.0 ⇒ 2.0、Tr -0.5 ⇒ 1.5）。
+// parseFloat 已拒非有限值，这里只夹到 [0,1]。M5 存而不用（无 alpha 通路，deferred #4）；
+// **M6 消费 opacity 时必须重新审视 d/Tr 的语义**——方向由 Ruling 52 的测试钉死、范围由
+// 这里钉死，两条都不是"M6 可以照单全收"的许可（与 D5 的 Kd 解码同一条"换 shader 时重审"纪律）。
+float clampOpacity(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
 // D17 的 arity 表（M5.1 评审修订）：**只决定"少吞还是多吞"，不是白名单**。未知选项返回 -1，
 // 走"丢自己 + 吞紧随的整串数字 token + 警告"那一支，而不是把整行报错。
 // 只保留高置信度条目：原表凭印象写的 -mm=3 / -cc / -imf 都与真实 MTL 规范不符。错条目的代价
@@ -90,8 +96,14 @@ bool parseMtl(std::string_view text, std::vector<Material>& out,
             continue;
         }
 
-        // 其余都是"作用于当前材质"的指令：没有 newmtl 在前就是结构性错误（D6）。
-        if (cur < 0) return fail(lineTag(lineNo) + "'" + std::string(dir) + "' 出现在任何 newmtl 之前");
+        // 其余都是"作用于当前材质"的指令：**已知**指令没有 newmtl 在前是结构性错误（D6——
+        // 没有这道守卫，mats[cur] 就是 mats[-1] 的 UB）。**未知**指令即使在 newmtl 之前也走
+        // D3（忽略 + 计数 + 警告，终审 P8）：它污染不了一个尚不存在的材质，报错只会白白毙掉
+        // 头部带散落属性的真实文件。路由分界在这里，两条各有测试钉住。
+        const bool known = dir == "Kd" || dir == "Ka" || dir == "Ks" || dir == "Ns" ||
+                           dir == "d" || dir == "Tr" || dir == "map_Kd";
+        if (cur < 0 && known)
+            return fail(lineTag(lineNo) + "'" + std::string(dir) + "' 出现在任何 newmtl 之前");
 
         if (dir == "Kd" || dir == "Ka" || dir == "Ks") {
             if (tokens.size() < 4)
@@ -118,8 +130,8 @@ bool parseMtl(std::string_view text, std::vector<Material>& out,
                 return fail(lineTag(lineNo) + std::string(dir) + " 的数字参数 '" +
                             std::string(tokens[1]) + "' 解析失败");
             if (dir == "Ns") mats[cur].shininess = v;        // 原样存，语义归 M6
-            else if (dir == "d") mats[cur].opacity = v;      // d 是 opacity
-            else mats[cur].opacity = 1.0f - v;               // Tr 是 transparency，方向相反（Ruling 52）
+            else if (dir == "d") mats[cur].opacity = clampOpacity(v);          // d 是 opacity
+            else mats[cur].opacity = clampOpacity(1.0f - v); // Tr 方向相反（Ruling 52），范围夹 [0,1]（M9）
             continue;
         }
 

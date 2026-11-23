@@ -56,6 +56,9 @@ struct Model {
 // - negativeIndices：按**分量**计，f 角里每个负索引（v/vt/vn 都算）记 1。
 // - unrecognized：s/vp/bevel/cset/未知指令的条数（D3：忽略 + 计数 + 警告）。
 //   o/g/mtllib 是已知指令，不计（o/g 的名字不切分几何，分组只按材质；mtllib 归 scanObjMtllib）。
+//   parseObj 本身只计 OBJ 一侧；**经 loadModel 后本字段是 OBJ+MTL 合计**——parseMtl 的未知
+//   属性计数（MtlStats.unrecognized）由 loadModel 在 parseObj 之前并入（终审 I1），
+//   HUD 的 UNRECOGNIZED n 读的是这个合计。optionTokensSkipped 不并（口径不同，见 model.cpp）。
 struct ObjStats {
     int triangles = 0, faceCorners = 0, uniqueVertices = 0;
     int trianglesFromQuads = 0, trianglesFromNGons = 0;

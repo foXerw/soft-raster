@@ -1,6 +1,7 @@
 #include "loader/model.h"
 
 #include <cstdio>
+#include <exception>
 #include <fstream>
 #include <map>
 #include <utility>
@@ -26,7 +27,21 @@ bool readWholeFile(const std::filesystem::path& p, std::string& out, std::string
         err = lex::displayPath(p) + ": 读取失败";
         return false;
     }
-    out.resize(static_cast<size_t>(len));
+    // 终审 M2：先问再分配（D13 哲学）。无上限的 resize 对一个多 GB 文件会抛 bad_alloc，
+    // 而本层契约是 false + err，不是 terminate。上限在分配**之前**问，消息带常量名可归因。
+    if (static_cast<size_t>(len) > kMaxModelTextBytes) {
+        err = lex::displayPath(p) + ": 文件超过 kMaxModelTextBytes（" +
+              std::to_string(kMaxModelTextBytes / (1024u * 1024u)) + " MiB），拒绝读取";
+        return false;
+    }
+    // catch 是第二道：上限之内（256 MiB）的分配在内存紧张/32 位进程下仍可能失败，
+    // 同样转成 false + err，不让任何异常逃出加载器（契约）。
+    try {
+        out.resize(static_cast<size_t>(len));
+    } catch (const std::exception&) {
+        err = lex::displayPath(p) + ": 读取失败（内存不足）";
+        return false;
+    }
     f.seekg(0, std::ios::beg);
     if (len > 0 && !f.read(out.data(), len)) {
         err = lex::displayPath(p) + ": 读取失败";
@@ -56,6 +71,8 @@ std::filesystem::path pathFromUtf8(std::string_view name) {
 // 10 万面、满是 s 1/s off 的模型会吐几万行，症状是"程序看起来卡死了"，而真正的新闻
 // （载入成功）被埋掉。现在最多前 8 条 + 一条汇总；**总数**仍在 stats.unrecognized，
 // HUD 的 UNRECOGNIZED n 读的是它，不读打印行数 —— 上限只压噪声，不压信息。
+// 这句话对 MTL 一侧也成立的前提是 loadModel 把 MtlStats.unrecognized 并进 out.stats
+// （终审 I1，见下方合并点）—— 否则 printWarnings 对两个半区都调用，而 HUD 只读 OBJ 半区。
 void printWarnings(const std::filesystem::path& file, const std::vector<std::string>& warnings) {
     constexpr size_t kMaxPrintedWarnings = 8;
     const std::string display = lex::displayPath(file);
@@ -114,6 +131,16 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
             out = LoadedModel{};
             return false;
         }
+        // 终审 I1（整枝唯一的跨任务缺陷）：MTL 的未知属性计数并进 HUD 可见的总数。
+        // HUD 的 UNRECOGNIZED n 读 ObjStats::unrecognized（main.cpp），而 parseObj 只计 OBJ
+        // 指令 —— 不并的话 female02 的 44 条警告（MTL 12 + OBJ 32）在 HUD 上只显示 32。
+        // 必须在 parseObj **之前**并：parseObj 对 stats 是累加（++/+=，不重置，已核对 obj.cpp），
+        // 而 out 在函数入口刚被清空，所以这里并进去的 MTL 计数会被 parseObj 原样保留并叠加 OBJ 计数。
+        // **optionTokensSkipped 不并**：它计的是已知指令 map_Kd 内部被跳过的选项 token（D17），
+        // 其中多数是 -s/-o 这类合法选项 —— 不是"未知指令"。并进去会让 UNRECOGNIZED ≠ 警告条数，
+        // 把正常解析标成"未识别"。未知选项的信息已由逐条 warning 承载（D17），不丢；
+        // 计数本身留在 MtlStats 里，将来若要观测再单独立字段，不混进 D3 的口径。
+        out.stats.unrecognized += mtlStats.unrecognized;
         printWarnings(mtlPath, mtlWarnings);
         const std::filesystem::path mtlDir = mtlPath.parent_path();
         for (Material& mat : parsed) {
@@ -204,9 +231,18 @@ void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& targe
         const Material& mat = m.model.materials[static_cast<size_t>(g.material)];
         FragmentUniforms fu = base;          // 保留调用方的 sampler 等
         fu.baseColor = mat.diffuse;          // 线性 Kd（parseMtl 已解码，D5）
-        const int32_t slot = m.texturePerMaterial[static_cast<size_t>(g.material)];
+        // 槽位防御（终审 M1/P21）：上面 g.material 只对 materials.size() 做了界检查，slot 还需
+        // 自己对 textures.size() 做界检查 —— 冻结不变式（Ruling 66）只禁 textures 载入后增长，
+        // 不禁这几个 public vector 互相失配（M8 的 binning 直接消费它们）。texturePerMaterial
+        // 同理：loadModel 把它 assign 成 materials.size()，但载入后无人守它不缩短。
+        // 越界/失配一律当"无贴图"（texturedFS 退回 Kd 纯色），与材质下标检查同一种
+        // "防御而非断言"的房风：跳过贴图，不越界读。
+        const bool matInTable = static_cast<size_t>(g.material) < m.texturePerMaterial.size();
+        const int32_t slot = matInTable ? m.texturePerMaterial[static_cast<size_t>(g.material)] : -1;
         // 每次按组从**当前** textures 取地址：借用只活在这一次 drawRange 内（model.h 不变式）。
-        fu.texture = slot >= 0 ? &m.textures[static_cast<size_t>(slot)] : nullptr;
+        fu.texture = (slot >= 0 && static_cast<size_t>(slot) < m.textures.size())
+                         ? &m.textures[static_cast<size_t>(slot)]
+                         : nullptr;
         st.fu = fu;
         backend.drawRange(m.model.mesh, st, g.indexOffset, g.indexCount);
     }

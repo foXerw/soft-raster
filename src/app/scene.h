@@ -35,7 +35,9 @@ struct SceneState {
     bool fitEnabled = true;
     std::string errorLine;   // 空 = 无错误；成功载入清空；失败写新值（HUD 第二行整行给它）
     std::string modelLabel = "CUBE";   // HUD 用：文件名（UTF-8）或 "CUBE"，跟着画面上的模型走
-    // 最近一次请求载入的路径（R 重载"同一个 path"用；失败后也可重试）。empty = 从未请求。
+    // 最近一次**可信**请求载入的路径（过了 .obj 后缀守卫；R 重载"同一个 path"用，内容级
+    // 失败后也可重试）。坏后缀/空路径不覆盖它（P26/P27：R 不该重试一个后缀永远不会变好的
+    // 请求）。empty = 从未有过可信请求。
     std::filesystem::path requested;
 
     // 成功：换上**新建**的模型、清 errorLine、更新 label，返回 true。
