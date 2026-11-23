@@ -9,6 +9,9 @@
 #include "render/render_target.h"
 #include "version.h"
 
+// M5.7 锚 3（OBJ 场景 vs 本文件的 M4 参考图，零容差、进程内、跳过 HUD 条）在
+// tests/unit/test_obj_golden.cpp —— 它复用这张参考图，**不新增** m5_*.bmp（收紧 2）。
+
 namespace {
 
 // 用绝对路径而不是相对 cwd：CTest 的工作目录是 build/，写成相对路径的话

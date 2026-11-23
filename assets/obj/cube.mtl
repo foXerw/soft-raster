@@ -1,0 +1,7 @@
+# cube.mtl — M5.7 手写资产。Kd 纯白：srgbToLinear(1.0f)==1.0f 精确（M5.1 Step 3）
+# ⇒ tint 可证中性，锚 3 的逐字节比对不会被颜色解码扰动。
+# map_Kd 相对 **MTL 目录**（Ruling 47）指向 M5.3 的 checker.tga；.tga 后缀 ⇒ loadModel
+# 路由到我们自己的 loadTgaFile（Ruling 63）—— 锚 2 守的那个解析器正是这张 golden 经过的。
+newmtl checker
+Kd 1 1 1
+map_Kd ../tga/checker.tga

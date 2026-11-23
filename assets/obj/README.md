@@ -1,6 +1,6 @@
 # assets/obj 与它引用的贴图
 
-本目录放 M5 的手写 OBJ/MTL 资产（`cube.obj`、`twomats.obj` 等由 M5.4 提交）。
+本目录放 M5 的手写 OBJ/MTL 资产（`twomats.obj` 由 M5.4 提交，`cube.obj` 由 M5.7 提交）。
 它们引用的 `../tga/checker.tga` 是**程序生成**的贴图（设计 D14：committed 资产全部
 由仓库内代码生成，不含外部资产许可问题）。这份 README 记录它的 provenance ——
 与 `third_party/README.md` 的 sha256 纪律同一条理由：**"这张图是怎么来的"必须可机器复现，
@@ -66,6 +66,34 @@ sha256sum assets/tga/checker.tga   # 应等于上表那串
 - 行尾 LF（`.gitattributes` 已声明 `*.obj`/`*.mtl text eol=lf`）；提交后复核
   `git show HEAD:assets/obj/twomats.mtl | od -c | head` 无 CR。
 - 它**不是** golden 锚（锚 1/3 用 M5.7 的 `cube.obj`）；朝向/绕向的肉眼验收归 M5.6。
+
+## cube.obj / cube.mtl 的 provenance（M5.7，锚 1 资产版 + 锚 3）
+
+**手写**资产（作者按 `mesh.cpp` 的约定推导后落盘，无脚本、无导出器）。
+它是 M5 验证架构（设计 §1/§10）的落地点：三条方向约定各有一个独立的锚。
+
+| 项 | 值 / 守什么 |
+|---|---|
+| 几何 | 8 个 `v`（±0.8 = `makeCube(1.6f)` 的半边）、6 个 `vn`（轴法线）、24 个 `vt`（每面 4 个）、6 个四边形 `f v/vt/vn` |
+| vt 惯例 | **按 OBJ 惯例写：v=0 是贴图的下边缘** —— 这句话是锚 1 有牙齿的前提。解析器出口的 `v = 1 - v`（D9）把它翻译成 mesh 契约（v=0 = 面的顶边，`mesh.cpp:49-52`） |
+| 面序 | `+X,-X,+Y,-Y,+Z,-Z`（`mesh.cpp:15` 的既有约定）；每面角序与 `makeCube` 逐面一致 ⇒ D8 扇形 `(a,b,c),(a,c,d)` 与 `appendQuad` 同一条对角线 a–c |
+| 材质 | 一个 `checker`，**`Kd 1 1 1`**（纯白：`srgbToLinear(1.0f)==1.0f` 精确 ⇒ tint 可证中性）+ `map_Kd ../tga/checker.tga`（相对 MTL 目录，Ruling 47；复用 M5.3 资产，零新增图像） |
+| 解码路径 | `.tga` 后缀 ⇒ `loadModel` 路由到**我们自己的** `loadTgaFile`（Ruling 63）—— 锚 2 守的解析器正是这张 golden 经过的那条 |
+
+- **锚 1 资产版**：`anchor1_cube_obj_parses_to_the_same_triangles_as_makeCube`
+  （`tests/unit/test_obj_golden.cpp`）—— 解析结果与 `makeCube(1.6f,true)` 按规范化三角形
+  （3 种旋转取字典序最小、排序、逐元素 1e-5f）比对：吸收起点选择，**不吸收绕向/镜像**。
+  `positions.size()==24` 是立方体的固有形状（每面 vt/vn 不同 ⇒ 跨面不共享），不是去重失效。
+- **锚 3**：`anchor3_obj_golden_is_the_m4_golden_except_the_hud_strip` —— OBJ 场景进程内渲染，
+  与既有 `assets/golden/m4_textured_cube.bmp` **零容差**逐像素比对，只跳过 HUD 矩形
+  （x<110 && y<12）。**不新增参考图**（收紧 2）：少一张参考图就少一个"重新生成后一切正常"
+  的失败面。姿态用 M4 固定 pose（Ruling D15），HUD 写 `GOLDEN M5 320X180`（与 M4 同长度差一个字）。
+- 人眼查看入口：`soft-raster --obj assets/obj/cube.obj --golden-write-obj <path.bmp>`
+  （独立 flag、必须配 `--obj`，Ruling 38）；notes 图在 `docs/notes/img/m5-obj-cube.bmp`。
+- 行尾 LF（`.gitattributes` 的 `*.obj`/`*.mtl text eol=lf`）；提交后复核无 CR。
+- **纪律**：锚 1/3 变红时先修文件或查翻转，**不许**改解析器来就文件（M5.2 已钉死解析器）、
+  不许加宽容差/加宽 HUD 矩形、不许重生成 M4 参考图。双翻转抵消时锚 3 会绿而锚 1/2 红 ——
+  那是设计内的实测结论（M5.7 Step 7 变异③），不是"可以放松合成检查"的许可。
 
 ## 生成提交
 

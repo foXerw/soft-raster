@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -26,6 +27,8 @@
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
 #include "loader/lex.h"   // displayPath（Ruling 62：消息里的路径不用 .string()）
+#include "loader/model.h"      // loadModel（--golden-write-obj 的装配入口）
+#include "loader/obj_scene.h"  // renderObjGoldenScene（M5.7 锚 3 的场景函数）
 #include "loader/tga_writer.h"
 #include "math/transform.h"
 #include "render/builtin_shaders.h"
@@ -232,11 +235,14 @@ int saveScreenshot(const sr::RenderTarget& target, const std::filesystem::path& 
     return 0;
 }
 
-// 两个 golden 入口共用"建离屏面 → 渲一帧 → 存图"这一段，唯一区别是**调用哪个场景函数**。
-// 场景函数以指针传入而不是复制两份：参考图必须由生产代码里的那一个函数生成，
+// 三个 golden 入口共用"建离屏面 → 渲一帧 → 存图"这一段，唯一区别是**调用哪个场景函数**。
+// 场景以可调用对象传入而不是复制两份：图必须由生产代码里的那一个函数生成，
 // 而"哪个函数生成了它"要能从打印出来的标签里读出来（标签与函数搞错的代价是一整帧白比对）。
+// M5.7：从裸函数指针放宽到 std::function，因为 OBJ 场景要携带一个已载入的模型
+// （renderObjGoldenScene(m, ...)）—— 但**没有引入带默认值的场景选择**：每个入口
+// 仍是自己的 flag（Ruling 38），缺 --obj 在 parseCmdline 就报错。
 int writeGolden(const std::string& label, const std::filesystem::path& path,
-                void (*scene)(sr::RenderTarget&, sr::FrameStats*)) {
+                const std::function<void(sr::RenderTarget&, sr::FrameStats*)>& scene) {
     auto surface = app::createOffscreenSurface(sr::kGoldenWidth, sr::kGoldenHeight);
     sr::FrameStats stats;
     scene(surface->target(), &stats);
@@ -524,6 +530,21 @@ int main(int argc, char** argv) {
     if (!o.goldenWriteTextured.empty()) {
         return writeGolden("m4_textured_cube", app::nativePath(o.goldenWriteTextured),
                            sr::renderGoldenSceneTextured);
+    }
+    if (!o.goldenWriteObj.empty()) {
+        // parseCmdline 已保证 --obj 非空（缺它 ⇒ 参数错误），这里没有默认场景。
+        // 输出只是给人看的图（notes 用）：锚 3 的比对在测试里进程内对着既有 M4
+        // 参考图做，**不新增参考图**（收紧 2）。载入失败 ⇒ 响亮退出，不画兜底立方体。
+        sr::LoadedModel model;
+        std::string loadErr;
+        if (!sr::loadModel(app::nativePath(o.obj), model, loadErr)) {
+            std::printf("[golden-obj] 载入失败: %s\n", loadErr.c_str());
+            return 1;
+        }
+        return writeGolden("m5_obj_cube", app::nativePath(o.goldenWriteObj),
+                           [&model](sr::RenderTarget& t, sr::FrameStats* s) {
+                               sr::renderObjGoldenScene(model, t, s);
+                           });
     }
     if (o.offscreen) return runOffscreen(o);
     return runWindow(o);

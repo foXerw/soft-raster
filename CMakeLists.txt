@@ -69,6 +69,7 @@ add_library(soft_raster_loader STATIC
   src/loader/image_stb.cpp
   src/loader/image_tga.cpp
   src/loader/model.cpp
+  src/loader/obj_scene.cpp   # M5.7 锚 3 场景：要 LoadedModel，所以进 loader 不进 core（C4）
 )
 target_link_libraries(soft_raster_loader PUBLIC soft_raster_core)
 target_include_directories(soft_raster_loader PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -129,6 +130,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_tga_writer.cpp
     tests/unit/test_mtl.cpp
     tests/unit/test_obj.cpp
+    tests/unit/test_obj_golden.cpp
     tests/unit/test_model.cpp
     tests/unit/test_scene.cpp
     tests/golden/golden.cpp

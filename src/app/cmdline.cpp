@@ -116,6 +116,13 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             out.offscreen = true;
             continue;
         }
+        // M5.7 的 OBJ golden 入口（Ruling 38：独立 flag、不带默认场景）。
+        // 与 --obj 的配对检查放在循环之后：这里只收值，整体形状最后判。
+        if (a == "--golden-write-obj") {
+            if (!p.nextString("--golden-write-obj", out.goldenWriteObj)) return false;
+            out.offscreen = true;
+            continue;
+        }
         // M5 的 checker.tga 资产入口（Ruling 38：独立 flag、不带默认值）。
         // 它不渲染，所以**不**隐含 --offscreen —— main 里写完即返回。
         if (a == "--emit-checker-tga") {
@@ -190,20 +197,28 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
         return p.fail("多余参数 '" + a + "'（这个程序只接受选项，不接受位置参数）");
     }
 
-    // 两个 golden 入口同时给 ⇒ 拒绝。放在循环**之后**而不是分支里，是因为这里要判的是
-    // "两个都非空"这个整体形状：写在分支里就得依赖参数顺序（先看到谁就赢），
+    // 三个 golden 入口同时给 ⇒ 拒绝。放在循环**之后**而不是分支里，是因为这里要判的是
+    // "多个都非空"这个整体形状：写在分支里就得依赖参数顺序（先看到谁就赢），
     // 而那正是我们要消灭的东西 —— 静默忽略第二个入口的症状是"我以为两张都刷新了"。
-    if (!out.goldenWrite.empty() && !out.goldenWriteTextured.empty()) {
-        return p.fail("--golden-write 与 --golden-write-textured 不能同时给"
-                      "（一次只刷一张参考图；两张都要就分两次跑）");
+    const int goldenEntries = (!out.goldenWrite.empty() ? 1 : 0) +
+                              (!out.goldenWriteTextured.empty() ? 1 : 0) +
+                              (!out.goldenWriteObj.empty() ? 1 : 0);
+    if (goldenEntries > 1) {
+        return p.fail("--golden-write / --golden-write-textured / --golden-write-obj 不能同时给"
+                      "（一次只刷一张图；都要就分多次跑）");
     }
 
-    // 资产入口与两个 golden 入口互斥，理由与上面那条相同：main 里 emit-checker-tga
+    // OBJ golden 必须与 --obj 配对（M5.7）：缺 --obj ⇒ 明确报错，**没有默认场景**。
+    // 同样放在循环之后，与参数顺序无关。
+    if (!out.goldenWriteObj.empty() && out.obj.empty()) {
+        return p.fail("--golden-write-obj 需要 --obj 指定要载入的模型（没有默认场景）");
+    }
+
+    // 资产入口与三个 golden 入口互斥，理由与上面那条相同：main 里 emit-checker-tga
     // 分支先返回，同时给 golden 入口会被静默忽略 ——"我以为参考图也刷新了"没有别的信号。
-    if (!out.emitCheckerTga.empty() &&
-        (!out.goldenWrite.empty() || !out.goldenWriteTextured.empty())) {
-        return p.fail("--emit-checker-tga 与 --golden-write/--golden-write-textured 不能同时给"
-                      "（一次只做一件事；都要就分两次跑）");
+    if (!out.emitCheckerTga.empty() && goldenEntries > 0) {
+        return p.fail("--emit-checker-tga 与 --golden-write/--golden-write-textured/"
+                      "--golden-write-obj 不能同时给（一次只做一件事；都要就分多次跑）");
     }
 
     // 离屏模式没给 --out 时给一个默认名：这样 `--bench 60` 这类纯测量的调用
@@ -237,6 +252,10 @@ std::string usageString() {
            "                     渲染 M4 golden 场景（贴图立方体 + 三线性）并写出。\n"
            "                     与上面那个是**两个入口**而不是一个带默认值的场景选择：\n"
            "                     后者会把 M4 的图画进 M3 的路径，而症状是\"重新生成后一切正常\"\n"
+           "  --golden-write-obj <path.bmp>\n"
+           "                     载入 --obj 指定的模型，按 M4 golden 的固定姿态渲染并写出\n"
+           "                     （M5.7 锚 3 的人眼查看入口；比对在测试里进程内做，不新增\n"
+           "                     参考图）。必须与 --obj 同时给，缺 --obj 报错而不是默认场景\n"
            "  --emit-checker-tga <path.tga>\n"
            "                     把程序生成的 checker（makeCheckerImage，128x128）写成\n"
            "                     未压缩 32bpp TGA（bottom-up）。不渲染；assets/tga/checker.tga\n"

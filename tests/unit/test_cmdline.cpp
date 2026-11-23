@@ -297,3 +297,72 @@ SR_TEST(cmdline_rejects_emit_checker_tga_together_with_golden_entries) {
     SR_ASSERT_FALSE(ok);
     SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
 }
+
+SR_TEST(cmdline_golden_write_obj_pairs_with_obj) {
+    // Ruling 38 的第四个实例：OBJ golden 有自己的显式入口，不带默认场景。
+    // 它需要 --obj 说明载入哪个模型；两个 flag 的顺序不该影响结果（检查在循环之后）。
+    Args a{{"--obj", "assets/obj/cube.obj", "--golden-write-obj", "build/m5.bmp"}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT(o.goldenWriteObj == "build/m5.bmp");
+    SR_ASSERT(o.obj == "assets/obj/cube.obj");
+    SR_ASSERT(o.goldenWrite.empty());           // 没有被顺手填上
+    SR_ASSERT(o.goldenWriteTextured.empty());
+    SR_ASSERT(o.emitCheckerTga.empty());
+    SR_ASSERT(o.offscreen);                     // 写 golden 不需要窗口
+    Args b{{"--golden-write-obj", "build/m5.bmp", "--obj", "assets/obj/cube.obj"}};
+    const auto o2 = parse(b, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(o2.goldenWriteObj == "build/m5.bmp");
+    SR_ASSERT(o2.obj == "assets/obj/cube.obj");
+}
+
+SR_TEST(cmdline_golden_write_obj_without_obj_is_an_error_not_a_default_scene) {
+    // 缺 --obj ⇒ 明确报错。给一个"默认场景"意味着忘了指定模型时画出来的东西
+    // 看起来一切正常 —— 与 Ruling 38 要消灭的假通过同族。
+    Args a{{"--golden-write-obj", "build/m5.bmp"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    if (err.find("--obj") == std::string::npos) std::printf("[cmdline] 错误消息是：%s\n", err.c_str());
+    SR_ASSERT(err.find("--obj") != std::string::npos);
+    SR_ASSERT(err.find("--golden-write-obj") != std::string::npos);
+}
+
+SR_TEST(cmdline_golden_write_obj_requires_a_value) {
+    Args a{{"--obj", "x.obj", "--golden-write-obj"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("--golden-write-obj") != std::string::npos);
+    SR_ASSERT(err.find("缺少值") != std::string::npos);
+}
+
+SR_TEST(cmdline_rejects_golden_write_obj_together_with_other_golden_entries) {
+    // 与 cmdline_rejects_two_golden_entries_together 同一条理由：main 里先匹配的分支
+    // 先返回，同时给两个入口会被静默忽略 —— "我以为两张都刷新了"没有别的信号。
+    Args a{{"--obj", "x.obj", "--golden-write-obj", "a.bmp", "--golden-write", "b.bmp"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("golden") != std::string::npos);
+    Args b{{"--obj", "x.obj", "--golden-write-textured", "b.bmp", "--golden-write-obj", "a.bmp"}};
+    parse(b, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("golden") != std::string::npos);
+}
+
+SR_TEST(cmdline_rejects_emit_checker_tga_together_with_golden_write_obj) {
+    Args a{{"--obj", "x.obj", "--emit-checker-tga", "a.tga", "--golden-write-obj", "b.bmp"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
+}

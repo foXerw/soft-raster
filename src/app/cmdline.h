@@ -31,6 +31,10 @@ struct AppOptions {
     // 带默认值的场景选择意味着"忘了指定场景"会把 M4 的图画进 M3 的路径（或反之），
     // 而它的症状是"重新生成基准图之后一切正常"。两个显式入口 = 没有默认值 = 没有这个坑。
     std::string goldenWriteTextured;
+    // M5.7 的 OBJ golden 同样是**自己的入口**（Ruling 38）：它必须与 --obj 配对
+    // （缺 --obj ⇒ 明确报错，没有默认场景），输出只是给人看的图 —— 锚 3 的比对在
+    // 进程内对着既有 M4 参考图做，**不新增参考图**（收紧 2）。
+    std::string goldenWriteObj;
     // M5 的 checker.tga 资产同样是**自己的入口**（Ruling 38 的理由原样适用）：
     // 不带默认值、不与任何场景/格式选择器合并。它不渲染，只把 makeCheckerImage
     // 的字节写成 TGA（锚 2 的 provenance 入口，设计 §10）。
