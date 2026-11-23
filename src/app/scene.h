@@ -40,13 +40,17 @@ struct SceneState {
 
     // 成功：换上**新建**的模型、清 errorLine、更新 label，返回 true。
     // 失败：旧 model 原样保留（先建新的再换指针，绝不先 reset()），只写 errorLine。
-    // 入口守 .obj 后缀（大小写不敏感）：argv 与拖放共用这一道，非 .obj ⇒ 错误行，
-    // 不静默忽略（A4）。自动 refit 不在这里做 —— load 不知道窗口尺寸，由调用方
-    // 在成功后按 fitEnabled 决定 refit(w,h)。
+    // 两道守卫：入口守 .obj 后缀（大小写不敏感，argv 与拖放共用，非 .obj ⇒ 错误行，
+    // 不静默忽略，A4）；loadModel 成功后守**零面**（评审 Important 1：loader 问"解析
+    // 对了吗"——零面文件解析意义上合法；app 问"画面有没有东西可看"——零三角形 ⇒
+    // 空屏，所以在这里判失败）。自动 refit 不在这里做 —— load 不知道窗口尺寸，
+    // 由调用方在成功后按 fitEnabled 决定 refit(w,h)。
     bool load(const std::filesystem::path& obj);
 
-    // 按当前窗口尺寸重 fit：只动 distance/target/near/far，yaw/pitch 从当前相机继承
-    // （fitCamera 的保证，D15：按 F 的人不是为了被重置视角）。model == nullptr ⇒ 不动作。
+    // 按当前窗口尺寸重 fit：动 distance/target/near/far 与 dolly 的夹钳区间
+    // （min/maxDistance，Ruling 73：fit 是 distance 的第二个写者，夹钳必须知道 fit 的
+    // 尺度）；yaw/pitch 从当前相机继承（fitCamera 的保证，D15：按 F 的人不是为了被
+    // 重置视角）。model == nullptr 或退化包围盒 ⇒ 不动作（六个字段一个都不碰）。
     void refit(int width, int height);
 };
 

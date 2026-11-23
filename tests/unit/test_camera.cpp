@@ -67,6 +67,20 @@ SR_TEST(dolly_is_multiplicative_and_bounded) {
     SR_ASSERT(c.distance <= 1000.0f);
 }
 
+SR_TEST(dolly_clamps_to_the_cameras_own_fields_not_the_global_constants) {
+    // Ruling 73：夹钳区间是**状态**不是常数。min=2 / max=3 都远离旧常数 0.05/1000：
+    // dolly 若仍写常数，两个方向各红一条（2.1*0.9=1.89 不该被放行；2.9/0.9=3.222 不该被放行）。
+    sr::OrbitCamera c;
+    c.minDistance = 2.0f;
+    c.maxDistance = 3.0f;
+    c.distance = 2.1f;
+    c.dolly(1.0f);
+    SR_ASSERT_NEAR(c.distance, 2.0f, 1e-6f);
+    c.distance = 2.9f;
+    c.dolly(-1.0f);
+    SR_ASSERT_NEAR(c.distance, 3.0f, 1e-6f);
+}
+
 SR_TEST(dragging_right_turns_the_object_right) {
     // 手感方向：往右拖 ⇒ 物体向右转 ⇒ 相机绕到物体左侧 ⇒ yaw **减小**。
     // 第一版写成 yaw += dx，方向是反的（产品方反馈"拖动方向和鼠标方向相反"）。

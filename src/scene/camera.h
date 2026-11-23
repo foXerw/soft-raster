@@ -17,6 +17,12 @@ struct OrbitCamera {
     float pitch = 0.35f;
     float distance = 5.0f;
     Vec3 target{0, 0, 0};
+    // dolly 的夹钳区间（Ruling 73）。**默认值就是旧常数** ⇒ 非 fit 路径（程序立方体、
+    // test_camera 既有用例）行为一字不变 —— 刻意不让 M5.6 顺带改 M2 以来的相机语义。
+    // fit 是 distance 的第二个写者：SceneState::refit 按模型尺度设这两个字段，否则
+    // mm 级 / 千单位级模型第一次滚轮就被旧常数 snap（"某些模型一动就飞走"）。
+    float minDistance = 0.05f;
+    float maxDistance = 1000.0f;
 
     Vec3 eye() const {
         const float cp = std::cos(pitch), sp = std::sin(pitch);
@@ -43,8 +49,9 @@ struct OrbitCamera {
 
     void dolly(float wheelSteps) {
         distance *= (wheelSteps > 0.0f) ? 0.9f : 1.0f / 0.9f;
-        if (distance < 0.05f) distance = 0.05f;
-        if (distance > 1000.0f) distance = 1000.0f;
+        // 夹钳读**字段**而不是常数（Ruling 73）：fit 过的相机带着自己尺度的区间。
+        if (distance < minDistance) distance = minDistance;
+        if (distance > maxDistance) distance = maxDistance;
     }
 };
 

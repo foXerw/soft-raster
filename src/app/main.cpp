@@ -90,6 +90,27 @@ sr::FilterMode nextFilter(sr::FilterMode f) {
 constexpr float kTurntableRadiansPerSecond = 0.6f;
 constexpr int kTargetFps = 60;
 
+// HUD 投影成 ASCII（M5.6 评审 Important 3）：位图字体是 8×8 **ASCII** 字形
+// （overlay_font.h），>= 0x80 的字节没有字形、glyphFor 画成方块 —— 中文错误原因在
+// 屏幕上读不到，而 D18 的中文路径场景恰恰是屏幕最该读到信息的地方（"该看到什么必须
+// always 在画面上"，"细节进终端"不满足它）。所以这里把非 ASCII 字节转义成 \xHH：
+// 信息保真、可逆，终端继续拿完整 UTF-8。**不加中文字体**（那是一整块与渲染无关的工作）。
+std::string hudAscii(const std::string& utf8) {
+    std::string out;
+    out.reserve(utf8.size());
+    for (const unsigned char c : utf8) {
+        if (c < 0x80) {
+            out.push_back(static_cast<char>(c));
+            continue;
+        }
+        const char* hex = "0123456789ABCDEF";
+        out += "\\x";
+        out.push_back(hex[c >> 4]);
+        out.push_back(hex[c & 0x0F]);
+    }
+    return out;
+}
+
 // 渲染一整帧。M5.6 起画面内容由 SceneState 决定：model == nullptr ⇒ 程序生成的
 // 立方体（M2–M4 的老画面，逐字节不变是这条分支的回归证据）；非空 ⇒ drawModel 逐组提交。
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
@@ -179,18 +200,18 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     // 第二行：errorLine 非空 ⇒ **整行给错误**，持续到下次成功载入（"该看到什么必须
     // always 在画面上"）。否则 = 模型标签 + DC/UNRECOGNIZED 计数 + 按键提示。
     // drawText 越界静默丢弃（render_target.h），长错误行在右缘截断，不会写坏内存。
-    // 已知限制：位图字体只有 ASCII 字形，错误消息里的中文会画成方块 —— 路径与数字
-    // 仍可读，完整 UTF-8 消息在终端（glyphFor 的"缺字必须看得见"约定）。
+    // 错误行与标签都经 hudAscii：屏幕上是 \xHH 转义串而不是中文原文（字体只有 ASCII
+    // 字形，理由见 hudAscii 注释）；终端拿完整 UTF-8。
     const int line2Y = 4 + 2 * sr::kGlyphHeightPx + 4;
     if (!scene.errorLine.empty()) {
-        sr::drawText(target.color, 4, line2Y, scene.errorLine,
+        sr::drawText(target.color, 4, line2Y, hudAscii(scene.errorLine),
                      sr::encodeSRGB({1.0f, 0.4f, 0.35f}), bg, 1);
     } else {
         char line2[256];
         const int unrecognized = scene.model ? scene.model->stats.unrecognized : 0;
         std::snprintf(line2, sizeof(line2),
                       "%s  DC %lld  UNRECOGNIZED %d  P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT R=RELOAD F=FIT ESC=QUIT",
-                      scene.modelLabel.c_str(), static_cast<long long>(stats.drawCalls),
+                      hudAscii(scene.modelLabel).c_str(), static_cast<long long>(stats.drawCalls),
                       unrecognized);
         sr::drawText(target.color, 4, line2Y, line2,
                      sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);

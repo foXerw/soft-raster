@@ -211,9 +211,13 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const UINT len = DragQueryFileW(drop, 0, nullptr, 0);   // 0 缓冲 ⇒ 返回所需长度
             if (len > 0 && in != nullptr) {
                 std::wstring wide(static_cast<size_t>(len) + 1, L'\0');   // +1 给结尾 null
-                DragQueryFileW(drop, 0, wide.data(), len + 1);
-                wide.resize(len);
-                in->droppedObj = utf8FromWide(wide);
+                // 查返回值（评审 Minor）：0 = 查询失败；> len = 被截断（缓冲按 len 分配，
+                // 不该发生，防御）。两种都不把半截路径当模型路径喂下去。
+                const UINT copied = DragQueryFileW(drop, 0, wide.data(), len + 1);
+                if (copied > 0 && copied <= len) {
+                    wide.resize(copied);
+                    in->droppedObj = utf8FromWide(wide);
+                }
             }
             DragFinish(drop);   // 无论有没有归属帧都要释放 shell 的内存
             return 0;

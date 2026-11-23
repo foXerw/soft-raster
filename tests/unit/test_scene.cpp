@@ -179,6 +179,105 @@ SR_TEST(scene_refit_without_a_model_keeps_the_camera) {
     SR_ASSERT_NEAR(s.farPlane, 100.0f, 1e-6f);
 }
 
+SR_TEST(scene_load_rejects_a_zero_face_obj_keeping_the_previous_model) {
+    // Important 1（M5.6 评审）：没有任何面的 OBJ 在 parseObj/loadModel 眼里是**成功**
+    // （空 mesh、零 group）—— 解析意义上合法（将来的点云/线框专用几何也会是它），
+    // 但 drawModel 什么都不提交 ⇒ 空屏 + DC 0 + 终端"已载入 0 三角形"，绕过了本任务
+    // "载入失败绝不空屏"的承诺。职责分界：loader 问"我解析对了吗"，app 问"这画面有没有
+    // 东西可看" ⇒ 守卫在 SceneState::load，不在 loader（loader 的解析语义不许动）。
+    TempDir dir("m56_zeroface");
+    writeText(dir.p / "verts.obj", "v 0 0 0\nv 1 0 0\nv 0 1 0\n");   // 只有顶点，没有 f
+    writeText(dir.p / "empty.obj", "");                              // 0 字节下载件
+    writeText(dir.p / "a.obj", kOneTriObj);
+    app::SceneState s;
+    // 初始状态：拒绝 ⇒ 兜底立方体保留（model nullptr），错误点名文件。
+    SR_ASSERT_FALSE(s.load(dir.p / "verts.obj"));
+    SR_ASSERT(s.model == nullptr);
+    if (s.errorLine.find("verts.obj") == std::string::npos)
+        std::printf("[scene] 零面 errorLine 是：%s\n", s.errorLine.c_str());
+    SR_ASSERT(s.errorLine.find("verts.obj") != std::string::npos);
+    SR_ASSERT_FALSE(s.load(dir.p / "empty.obj"));
+    SR_ASSERT(s.model == nullptr);
+    SR_ASSERT(s.errorLine.find("empty.obj") != std::string::npos);
+    // 有旧模型：拒绝 ⇒ 旧模型原样（先建新的再换指针，零面守卫在换指针之前）。
+    SR_ASSERT(s.load(dir.p / "a.obj"));
+    SR_ASSERT_FALSE(s.load(dir.p / "verts.obj"));
+    SR_ASSERT(s.model != nullptr);
+    if (s.model) SR_ASSERT_EQ(s.model->model.mesh.triangleCount(), 1);
+    SR_ASSERT(s.modelLabel == "a.obj");
+    SR_ASSERT(s.errorLine.find("verts.obj") != std::string::npos);
+}
+
+SR_TEST(scene_refit_sets_scale_relative_dolly_clamps_and_the_first_wheel_does_not_jump) {
+    // Ruling 73 的关键不变式：fit 是 distance 的第二个写者，夹钳必须知道 fit 的尺度 ——
+    // refit 之后正/负各 dolly 一次，distance 第一次输入必须按乘法规则走、**不跳**
+    // （等价于"fit 的输出永远落在夹钳区间内"）。只断言夹钳数值不够：max 设窄一档数值红
+    // 而不变式不红，max 设到 fit 输出以下不变式红 —— 两种断言各挡各的变异（Ruling 67：
+    // refit 写 4 个旧字段 + 2 个新边界，六件事各有各的红）。
+    TempDir dir("m56_clamps");
+    writeText(dir.p / "box.obj", kOffsetBoxObj);
+    app::SceneState s;
+    SR_ASSERT(s.load(dir.p / "box.obj"));
+    if (!s.model) return;   // 载入失败上面已红（trap (b)）
+    const float r = s.model->model.mesh.bounds.radius();   // 0.8√3 ≈ 1.3856406
+    const float tol = 1e-5f * r;
+    s.camera.yaw = 0.6f;
+    s.camera.pitch = -0.23f;
+    s.refit(1280, 720);
+    const float dFit = 2.0f * r;   // 16:9 ⇒ distance = 2r
+    SR_ASSERT_NEAR(s.camera.distance, dFit, tol);
+    // 两个新边界各自的数值断言（r*1e-3 = 0.001386 > 1e-6 ⇒ min 取 r/1000）。
+    SR_ASSERT_NEAR(s.camera.minDistance, r * 1e-3f, tol);
+    SR_ASSERT_NEAR(s.camera.maxDistance, r * 1e3f, tol);
+    // 不变式：正滚轮一格 = *0.9，不跳。
+    s.camera.dolly(1.0f);
+    SR_ASSERT_NEAR(s.camera.distance, 0.9f * dFit, tol);
+    // 负滚轮一格 = /0.9，不跳（max 若低于 fit 输出，这里被夹 ⇒ 红）。
+    s.refit(1280, 720);
+    s.camera.dolly(-1.0f);
+    SR_ASSERT_NEAR(s.camera.distance, dFit / 0.9f, tol);
+    // 高瘦窗口 fit 退得更远（4.486r），仍在区间内，第一下滚轮同样不跳。
+    s.refit(720, 1280);
+    const float dTall = s.camera.distance;
+    SR_ASSERT_NEAR(dTall, 4.48603f, 1e-5f);
+    s.camera.dolly(-1.0f);
+    SR_ASSERT_NEAR(s.camera.distance, dTall / 0.9f, tol);
+    // 加夹钳没弄丢 D15：yaw/pitch 仍归用户。
+    SR_ASSERT_NEAR(s.camera.yaw, 0.6f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.pitch, -0.23f, 1e-6f);
+}
+
+SR_TEST(scene_refit_on_degenerate_bounds_touches_nothing) {
+    // 与 fitCamera 守卫同口径（Ruling 49：退化 ⇒ 不动作）。这里额外钉夹钳：退化盒若仍按
+    // 公式写 min/max，max = r*1e3 会低于 min = 1e-6，dolly 会把相机夹死 —— 所以退化时
+    // refit 六个字段（distance/target/near/far/min/max）一个都不许碰。
+    TempDir dir("m56_degen");
+    // 1e-7 尺度三角形：三个**不同**顶点（不是重复引用退化面）⇒ parseObj 保留、indices
+    // 非空（过得了零面守卫），但 r = 8.66e-8 < 1e-6 ⇒ fitCamera 的退化分支。
+    writeText(dir.p / "tiny.obj", "v 0 0 0\nv 1e-7 0 0\nv 0 1e-7 0\nf 1 2 3\n");
+    app::SceneState s;
+    SR_ASSERT(s.load(dir.p / "tiny.obj"));
+    if (!s.model) return;
+    SR_ASSERT(s.model->model.mesh.bounds.radius() < 1e-6f);
+    s.camera.yaw = 0.6f;
+    s.camera.pitch = -0.23f;
+    s.camera.distance = 9.0f;
+    s.camera.target = sr::Vec3{1.0f, 2.0f, 3.0f};
+    s.nearPlane = 0.2f;    // 非默认："顺手重置成 0.1/100"也红
+    s.farPlane = 50.0f;
+    s.refit(1280, 720);
+    SR_ASSERT_NEAR(s.camera.yaw, 0.6f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.pitch, -0.23f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.distance, 9.0f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.target.x, 1.0f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.target.y, 2.0f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.target.z, 3.0f, 1e-6f);
+    SR_ASSERT_NEAR(s.nearPlane, 0.2f, 1e-6f);
+    SR_ASSERT_NEAR(s.farPlane, 50.0f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.minDistance, 0.05f, 1e-6f);
+    SR_ASSERT_NEAR(s.camera.maxDistance, 1000.0f, 1e-6f);
+}
+
 SR_TEST(scene_load_rejects_a_non_obj_extension_with_an_error_line) {
     // A4：非 .obj 后缀不许静默忽略。夹具内容是**合法 OBJ** —— 只有后缀守卫能拒绝它：
     // 守卫缺失时 loadModel 会成功 ⇒ 本条红（而不是因为内容坏"碰巧"失败，trap (a)）。

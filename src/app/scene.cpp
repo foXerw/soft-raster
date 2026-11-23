@@ -48,6 +48,16 @@ bool SceneState::load(const std::filesystem::path& obj) {
         errorLine = err;   // loadModel 的 err 已带文件名/行号（displayPath，UTF-8 无损）
         return false;
     }
+    // 零面守卫（M5.6 评审 Important 1）。职责分界：**loader 问"我解析对了吗"，app 问
+    // "这画面有没有东西可看"**。没有任何面的 OBJ 在解析意义上合法（parseObj/loadModel
+    // 返回 true；将来的点云/线框专用几何也会是它），所以 loader 拒绝它是错的；但
+    // drawModel 对零 group 什么都不提交 ⇒ 空屏 + DC 0 + 终端"已载入 0 三角形"，
+    // 恰好绕过本任务"载入失败绝不空屏"的承诺 —— 所以在换指针**之前**判失败，
+    // 兜底立方体/旧模型原样保留。
+    if (fresh->model.mesh.indices.empty()) {
+        errorLine = sr::lex::displayPath(obj) + ": 0 三角形（没有面），画面上没有东西可看";
+        return false;
+    }
     model = std::move(fresh);
     errorLine.clear();
     modelLabel = sr::lex::displayPath(obj.filename());
@@ -57,14 +67,26 @@ bool SceneState::load(const std::filesystem::path& obj) {
 void SceneState::refit(int width, int height) {
     if (model == nullptr) return;   // 程序生成立方体没有 fit 概念，相机归用户
     // parseObj 成功末尾已 recomputeBounds（obj.h 契约），这里直接消费包围球。
+    const sr::BBox& bounds = model->model.mesh.bounds;
+    const float r = bounds.radius();
+    // 退化 ⇒ 不动作（与 fitCamera 守卫同口径，Ruling 49）：六个字段一个都不碰。
+    // 若这里仍按公式写夹钳，max = r*1e3 会低于 min = 1e-6，dolly 会把相机夹死。
+    if (bounds.empty() || r < 1e-6f) return;
     // fov 用 kDefaultFovYRadians：renderFrame 的 makePerspective 取的是同一个常量，
     // 两边漂移的症状是"某些模型装不下"（P24）。退化 aspect 由 fitCamera 入口守卫兜住。
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    const sr::FittedCamera f =
-        sr::fitCamera(model->model.mesh.bounds, sr::kDefaultFovYRadians, aspect, camera);
+    const sr::FittedCamera f = sr::fitCamera(bounds, sr::kDefaultFovYRadians, aspect, camera);
     camera = f.camera;   // fitCamera 只动 distance/target；yaw/pitch 从 base 继承（D15）
     nearPlane = f.nearPlane;
     farPlane = f.farPlane;
+    // Ruling 73：fit 是 distance 的第二个写者，夹钳必须知道 fit 的尺度，否则 mm 级 /
+    // 千单位级模型第一次滚轮就被旧常数 [0.05, 1000] snap（"某些模型一动就飞走"）。
+    // 不变式：fit 的**可见**输出（distance ≤ far = 10r；超出 far 的帧本就全裁，
+    // 见 fit.h 的已知限制）恒有 distance ≥ 2r > min 且 ≤ 10r < max ⇒ 落在区间内，
+    // 第一下滚轮不跳。test_scene 的夹钳用例直接断言这条不变式，不只断言数值。
+    const float lo = r * 1e-3f;
+    camera.minDistance = lo > 1e-6f ? lo : 1e-6f;
+    camera.maxDistance = r * 1e3f;
 }
 
 }  // namespace app
