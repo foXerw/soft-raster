@@ -1,8 +1,16 @@
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
+
+// Ruling 75 的测试要数"打印了几行"，唯一可观测量是 stdout 本身：dup/dup2 重定向。
+#ifdef _MSC_VER
+#include <io.h>      // _dup / _dup2 / _close
+#else
+#include <unistd.h>  // dup / dup2 / close
+#endif
 
 #include "harness.h"
 #include "loader/bmp_writer.h"
@@ -576,4 +584,98 @@ SR_TEST(model_missing_chinese_texture_name_is_an_error_naming_it) {
         std::printf("[model] 缺中文贴图的 err 是：%s\n", err.c_str());
     SR_ASSERT(err.find("缺失.tga") != std::string::npos);   // 名字无损进 err
 #endif
+}
+// ---- Ruling 75：警告打印上限 -------------------------------------------------
+
+namespace {
+
+// stdout 捕获：dup 保存 fd 1 → freopen 到临时文件 → 析构时 dup2 恢复。
+// 捕获文件路径用**窄字符串字面量**（不经 fs::path，Ruling 62 的 .string() 问题无从发生）。
+// 为什么必须捕获 stdout 而不是测一个纯函数：要守的命题是"loadModel **打印**了几行"，
+// 打印行为本身就是被测对象；抽一个 formatWarnings 纯函数来测会漏掉"打印路径没接上它"。
+struct StdoutCapture {
+    int saved = -1;
+    explicit StdoutCapture(const char* path) {
+        std::fflush(stdout);
+#ifdef _MSC_VER
+        saved = _dup(1);
+#else
+        saved = dup(1);
+#endif
+#ifdef _MSC_VER
+        // freopen_s：MSVC 对裸 freopen 报 C4996（零警告地板）。
+        FILE* replaced = nullptr;
+        freopen_s(&replaced, path, "w", stdout);
+#else
+        std::freopen(path, "w", stdout);
+#endif
+    }
+    ~StdoutCapture() {
+        std::fflush(stdout);
+#ifdef _MSC_VER
+        _dup2(saved, 1);
+        _close(saved);
+#else
+        dup2(saved, 1);
+        close(saved);
+#endif
+    }
+    StdoutCapture(const StdoutCapture&) = delete;
+    StdoutCapture& operator=(const StdoutCapture&) = delete;
+};
+
+std::vector<std::string> readLines(const char* path) {
+    std::ifstream f(path, std::ios::binary);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+}  // namespace
+
+SR_TEST(model_warning_print_is_capped_at_eight_but_hud_total_is_preserved) {
+    // Ruling 75（人门验收时发现的真实缺陷）：6233 面的真实模型吐了 45 行警告；
+    // 10 万面、满是 s 1/s off 的模型会吐几万行 —— 症状是"程序看起来卡死了"，
+    // 而真正的新闻（载入成功）被埋掉。上限：最多前 8 条 + 一条"… 还有 M 条同类警告"；
+    // **总数**保留在 stats.unrecognized（HUD 的 UNRECOGNIZED n 读它，不读打印行数）。
+    TempDir dir("m57_warn_cap");
+    const auto run = [&dir](int n, const char* capFile) -> std::vector<std::string> {
+        // n 条未知指令（s 1）⇒ n 条警告；几何是一个合法三角形，载入必须成功。
+        std::string obj = "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
+        for (int i = 0; i < n; ++i) obj += "s 1\n";
+        writeText(dir.p / "noisy.obj", obj);
+        sr::LoadedModel m;
+        std::string err;
+        {
+            StdoutCapture cap(capFile);
+            const bool ok = sr::loadModel(dir.p / "noisy.obj", m, err);
+            SR_ASSERT(ok);
+            if (!ok) std::printf("[model] noisy 载入失败: %s\n", err.c_str());
+        }
+        // 总数不因打印上限而缩水（这条与打印行数断言互相独立：上限改坏总数会在这里红）。
+        SR_ASSERT_EQ(m.stats.unrecognized, n);
+        return readLines(capFile);
+    };
+
+    // 20 条 ⇒ 前 8 条原样 + 1 条汇总（"还有 12 条"）。未上限的实现打印 20 行 ⇒ 红。
+    const std::vector<std::string> twenty = run(20, "sr_tmp_bmp/m57_cap20.txt");
+    SR_ASSERT_EQ(twenty.size(), 9);
+    if (twenty.size() == 9) {
+        for (int i = 0; i < 8; ++i) {
+            SR_ASSERT(twenty[static_cast<size_t>(i)].find("[obj]") == 0);
+            SR_ASSERT(twenty[static_cast<size_t>(i)].find("未知指令") != std::string::npos);
+        }
+        SR_ASSERT(twenty[8].find("还有 12 条同类警告") != std::string::npos);
+    }
+    // 边界：恰好 8 条 ⇒ 8 行、**没有**汇总行（上限是"最多 8 条"，不是"总是 9 行"）。
+    const std::vector<std::string> eight = run(8, "sr_tmp_bmp/m57_cap8.txt");
+    SR_ASSERT_EQ(eight.size(), 8);
+    // 9 条 ⇒ 8 + 汇总"还有 1 条"。
+    const std::vector<std::string> nine = run(9, "sr_tmp_bmp/m57_cap9.txt");
+    SR_ASSERT_EQ(nine.size(), 9);
+    if (nine.size() == 9) SR_ASSERT(nine[8].find("还有 1 条同类警告") != std::string::npos);
 }

@@ -52,10 +52,20 @@ std::filesystem::path pathFromUtf8(std::string_view name) {
 }
 
 // warnings 在这一层打印（D3）：这是唯一同时看得见"文件"与"文本"的一层。
+// Ruling 75（人门验收时发现的真实缺陷）：原先逐条全打 —— 6233 面的真实模型吐了 45 行，
+// 10 万面、满是 s 1/s off 的模型会吐几万行，症状是"程序看起来卡死了"，而真正的新闻
+// （载入成功）被埋掉。现在最多前 8 条 + 一条汇总；**总数**仍在 stats.unrecognized，
+// HUD 的 UNRECOGNIZED n 读的是它，不读打印行数 —— 上限只压噪声，不压信息。
 void printWarnings(const std::filesystem::path& file, const std::vector<std::string>& warnings) {
+    constexpr size_t kMaxPrintedWarnings = 8;
     const std::string display = lex::displayPath(file);
-    for (const std::string& w : warnings)
-        std::printf("[obj] %s: %s\n", display.c_str(), w.c_str());
+    const size_t printed = warnings.size() < kMaxPrintedWarnings ? warnings.size()
+                                                                 : kMaxPrintedWarnings;
+    for (size_t i = 0; i < printed; ++i)
+        std::printf("[obj] %s: %s\n", display.c_str(), warnings[i].c_str());
+    if (warnings.size() > kMaxPrintedWarnings)
+        std::printf("[obj] %s: … 还有 %zu 条同类警告\n", display.c_str(),
+                    warnings.size() - kMaxPrintedWarnings);
 }
 
 // 大小写不敏感的 .tga 后缀判定（Ruling 63 的分派键）。用 u8string（无损）而不是 .string()

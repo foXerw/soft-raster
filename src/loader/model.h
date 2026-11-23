@@ -54,7 +54,8 @@ struct LoadedModel {
 
 // 读 OBJ → 扫 mtllib → 逐个读 MTL 并 parseMtl → parseObj → 每个非空 map_Kd 读贴图建纹理。
 // 成功 true；失败 false、out 清空、err 非空（带文件名/行号）。warnings 在本层打印到 stdout
-// （含文件名），因为这是唯一同时看得见"文件"与"文本"的一层（D3）。
+// （含文件名），因为这是唯一同时看得见"文件"与"文本"的一层（D3）。打印有上限：每个文件
+// 最多前 8 条 + 一条"… 还有 M 条同类警告"（Ruling 75）；总数不缩水，仍在 stats.unrecognized。
 //
 // **路径解析**：mtllib 名字相对 **OBJ 所在目录**；map_Kd 文件名相对 **MTL 所在目录**
 // （Blender 的 apply 修改器常把贴图放在 mtl 旁边而非 obj 旁边）。去重键是
