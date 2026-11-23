@@ -2,6 +2,7 @@
 
 #include "math/mat.h"
 #include "render/render_target.h"
+#include "render/sampler.h"
 #include "render/stats.h"
 #include "render/texture.h"
 
@@ -49,5 +50,12 @@ void renderGoldenScene(RenderTarget& target, FrameStats* stats);
 // **它是一个新函数，不是 renderGoldenScene 的改动**：后者被 main.cpp 与
 // `assets/golden/m3_cube.bmp` 用着，把纹理塞进去会让 M3 的回归锚点当场失效。
 void renderGoldenSceneTextured(RenderTarget& target, FrameStats* stats);
+
+// 背景与采样状态（M5.7 收紧 5：从 golden_scene.cpp 的文件内 static 提出来）。
+// OBJ golden 场景（src/loader/obj_scene.cpp）必须**复用这两个函数**而不是再写一份：
+// M4 的教训是两份副本会被一次改一个，而没被改的那份一直绿着。提出去的证明就是
+// 两份老 golden 仍然匹配（M4 逐字节 md5 不变；M3 走 ctest 的 ±1 容差，Ruling 50）。
+void goldenBackground(ColorTarget& color);
+SamplerState goldenSampler();
 
 }  // namespace sr

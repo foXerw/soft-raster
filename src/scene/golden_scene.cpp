@@ -23,7 +23,10 @@ Mesh goldenCube() {
     return cube;
 }
 
+}  // namespace
+
 // 背景也共用：差别只应该来自"立方体上画的是什么"。
+// M5.7 收紧 5：从文件内 static 提出去（声明在 golden_scene.h），OBJ golden 场景复用同一份。
 void goldenBackground(ColorTarget& color) {
     fillLinearGradient(color, LinearColor{0.05f, 0.05f, 0.20f}, LinearColor{0.80f, 0.60f, 0.15f},
                        0.0f);
@@ -32,6 +35,7 @@ void goldenBackground(ColorTarget& color) {
 // 采样状态。ClampEdge 而不是 Repeat：每面的 uv 正好铺满 [0,1]，
 // Repeat 会让 u=1 的边界回绕到第 0 列纹素，面的右边缘于是出现一条
 // "从另一侧抄过来的颜色"——那不是 bug，但它会让参考图看起来像接错了。
+// M5.7 收紧 5：提出去让 OBJ golden 场景复用 —— 第三份副本就是第三个会悄悄漂的地方。
 SamplerState goldenSampler() {
     SamplerState s;
     s.wrapU = WrapMode::ClampEdge;
@@ -40,8 +44,6 @@ SamplerState goldenSampler() {
     s.useMip = true;
     return s;
 }
-
-}  // namespace
 
 Mat4 goldenModel() { return Mat4::rotationX(kGoldenModelRotX) * Mat4::rotationY(kGoldenModelRotY); }
 
