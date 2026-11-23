@@ -236,7 +236,8 @@ SR_TEST(scene_refit_sets_scale_relative_dolly_clamps_and_the_first_wheel_does_no
     s.refit(1280, 720);
     s.camera.dolly(-1.0f);
     SR_ASSERT_NEAR(s.camera.distance, dFit / 0.9f, tol);
-    // 高瘦窗口 fit 退得更远（4.486r），仍在区间内，第一下滚轮同样不跳。
+    // 高瘦窗口 fit 退得更远（**绝对距离** 4.48603 ≈ 3.24r，r≈1.3856；不是 4.486·r），
+    // 仍在区间内，第一下滚轮同样不跳。
     s.refit(720, 1280);
     const float dTall = s.camera.distance;
     SR_ASSERT_NEAR(dTall, 4.48603f, 1e-5f);

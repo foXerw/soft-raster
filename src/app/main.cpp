@@ -97,7 +97,9 @@ constexpr int kTargetFps = 60;
 // （overlay_font.h），>= 0x80 的字节没有字形、glyphFor 画成方块 —— 中文错误原因在
 // 屏幕上读不到，而 D18 的中文路径场景恰恰是屏幕最该读到信息的地方（"该看到什么必须
 // always 在画面上"，"细节进终端"不满足它）。所以这里把非 ASCII 字节转义成 \xHH：
-// 信息保真、可逆，终端继续拿完整 UTF-8。**不加中文字体**（那是一整块与渲染无关的工作）。
+// 非 ASCII 字节无损保真，终端继续拿完整 UTF-8。注意这**不是严格可逆**的：路径里
+// 本来就含字面 \xHH 序列时，转义结果与真的非 ASCII 字节无法区分（不是单射）。
+// **不加中文字体**（那是一整块与渲染无关的工作）。
 std::string hudAscii(const std::string& utf8) {
     std::string out;
     out.reserve(utf8.size());
