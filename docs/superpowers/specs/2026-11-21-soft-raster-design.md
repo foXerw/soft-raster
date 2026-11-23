@@ -232,9 +232,11 @@ SoA 数组 + mask 语义，牺牲的正是本项目的主题。
   并允许 `--obj path` 载入外部模型；仓库内 `assets/` 提交若干 OBJ（cube、sphere、验收模型）
   与对应 golden BMP。验收模型（G3 的 5–10 万三角形）由程序生成（细分球/圆环面），
   以保证 golden 与帧率数字都可复现、且不含外部资产许可问题。
+  > 偏离见 [`2026-11-22-soft-raster-m5-obj-design.md`](2026-11-22-soft-raster-m5-obj-design.md) D14 续（M5 实施时定）：M5 只 committed `cube.obj`/`twomats.obj`/`checker.tga`；sphere 与验收模型推迟到 M8（committed 一个程序生成的 OBJ 需要先有导出器，那是 M5 的非目标）。
 - **场景 fit 行为**（审阅问题 7 的裁决）：载入 OBJ 后自动按包围球 fit 相机距离，
   并推 `near = radius/1000`、`far = radius*10`，fov 默认 60°。这样单位是 mm 还是 m 的模型都能立刻看到；
   `--no-fit` 可关闭，`F` 键重新 fit。golden 与性能测量都用 fit 后的确定性相机。
+  > 偏离见 [`2026-11-22-soft-raster-m5-obj-design.md`](2026-11-22-soft-raster-m5-obj-design.md) D15（M5 实施时定）：golden（锚 3）保留 M4 固定姿态，以便与既有 `m4_textured_cube.bmp` 零容差比对（fit 相机给出的是另一张毫不相干的图）；**性能测量仍用 fit 后的确定性相机**，那半句照旧执行。
 
 ### 7.6 窗口与显示（`src/app/`）
 
