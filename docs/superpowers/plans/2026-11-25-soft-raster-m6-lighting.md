@@ -251,10 +251,12 @@ SR_TEST(Ns_zero_disables_specular_and_is_equivalent_to_Ks_zero)   // §8.2 #10�
 - Consumes: `LightRig`、`MaterialShade`（M6.1）、`Vec3` 自由函数（`dot/cross/normalize/length`）、`srgbToLinear`。
 - Produces:
   ```cpp
-  // 漫反射 + ambient（Gouraud 用这一支；不含高光）
+  // ambient + 漫反射的核心。**被 shadeBlinnPhong 组合调用**（Ruling 91/D25：它不是"Gouraud 那一支"，
+  // Gouraud 用完整光照；这一支的存在是为了让 N·L 只有一份实现）。
   LinearColor shadeDiffuseOnly(const Vec3& N, const Vec3& P, const LightRig&, const MaterialShade&,
                                const LinearColor& albedo);
-  // 漫反射 + ambient + Blinn-Phong 高光（逐像素用这一支）
+  // 完整光照：ambient + 漫反射 + Blinn-Phong 高光。**lambertVS 与 blinnPhongPerPixelFS 都用这一支**
+  // （Ruling 91：没有高光的 Gouraud 没有高光带可观察，§8.2 #7b 会空转）。
   LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const MaterialShade&,
                               const LinearColor& albedo);
   ```
@@ -303,9 +305,8 @@ SR_TEST(Ns_zero_disables_specular_and_is_equivalent_to_Ks_zero)   // §8.2 #10�
 
 - [ ] **Step 8: 实现 `shading.h`**
 
-两个函数；`shadeDiffuseOnly` 是 `shadeBlinnPhong` 去掉高光支的同一套代码 ⇒
-**共享一个内部 `struct LightContribution` 或一个 `static` 求和函数**，
-不许出现两份逐字重复的 `N·L` 计算（M5 的 `lex.h` 判例：逐字重复的逻辑块必须唯一一份）。
+`shadeBlinnPhong` = `shadeDiffuseOnly` 的结果 + 高光项（Ruling 91 的组合关系），
+**不许出现两份逐字重复的 `N·L` 计算**（M5 的 `lex.h` 判例：逐字重复的逻辑块必须唯一一份）。
 `powf` 只在 `shininess > 0` 时调用（D3）。
 
 - [ ] **Step 9: 全绿 + 变异验证（Ruling 67 的完整一次）**
@@ -349,7 +350,9 @@ SR_TEST(gouraud_albedo_is_vertex_color_times_diffuse)              // D17
 `lambertVS`：MVP 三行与 `transformVS` **共用一个内部函数**（`clipFromPosition` 之类，
 放 `builtin_shaders.cpp` 匿名 namespace），不许逐字复制；
 然后 `albedo = xyz(in.color) * mat->diffuse`（`LinearColor` 层面），
-`v.color = makeVec4(shadeDiffuseOnly(N_world, P_world, *lights, *mat, albedo), 1.0f)`。
+`v.color = makeVec4(shadeBlinnPhong(N_world, P_world, *lights, *mat, albedo), 1.0f)`
+（**完整光照**，Ruling 91 —— Gouraud 的教科书定义就是"在顶点处算完整光照再插值结果"；
+若这里用 `shadeDiffuseOnly`，M6.8 的 #7b 会退化成"没有 vs 有"而不是"摊开 vs 收紧"）。
 `lights == nullptr` ⇒ 退化成 `v.color = in.color`（unlit 语义，别写死白）。
 `lambertPerVertexFS`：`out.color = LinearColor{in.v.color.x, .y, .z}`（直读插值结果，**一行**）。
 
