@@ -134,6 +134,7 @@ if(SR_BUILD_TESTS)
     tests/unit/test_model.cpp
     tests/unit/test_scene.cpp
     tests/unit/test_lit_shaders.cpp   # M6.1：plumbing；M6.3/M6.4 的 lit shader 用例也进这里
+    tests/unit/test_shading.cpp       # M6.2：光照本体的解析单测（D20）
     tests/golden/golden.cpp
     src/app/cmdline.cpp
     tests/unit/test_cmdline.cpp
