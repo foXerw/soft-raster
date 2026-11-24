@@ -152,7 +152,7 @@ grep 守卫是给机器读的，两者撞车时机器赢。代价：两个 targe
 `W` 键（`main.cpp:375`，借来做背面演示）就是诊断工具。不加自动翻转选项——猜方向是 A3 那一族的另一支。
 
 **(d) `Kd`/`Ka`/`Ks` 在解析时解码 sRGB，贴图像素在采样时解码——这两件事不对称（D5）。**
-`Kd` 是文件里的一个浮点数，没有"采样时"可用，只能在解析时定身（`mtl.cpp:106` 走 `srgbToLinear(float)`，
+`Kd` 是文件里的一个浮点数，没有"采样时"可用，只能在解析时定身（`mtl.cpp:118` 走 `srgbToLinear(float)`，
 `color.h:27`）；若量化成 uint8 再解码会白白引入一档误差。贴图则**不在加载时解码**：
 `makeTexture(img, /*colorDataIsSrgb=*/true)` 只设 `srgb` 标志 + 建 mip 链，解码在采样时逐像素发生
 （`toTexelF`，`sampler.cpp:50`），理由见 M4 notes §3（加载时解码要 ×4 内存、mip 平均会在编码空间里做、
@@ -198,7 +198,7 @@ provenance 见 `assets/obj/README.md`）——不含外部资产，无许可暴�
 
 | # | 内容 | 处置 | 落点 |
 |---|---|---|---|
-| #2 | `sampler.cpp` 的 `texel()==nullptr` 静默给全 0 | **关**：debug-only 计数 | `texture.h:45` 的 `outOfRangeTexelSamples`（`sampler.cpp:55` bump）+ `ObjStats.uvOutOfRange`（`obj.cpp:144`）；测试 `texture_counts_out_of_range_texel_samples_in_debug`、`obj_keeps_out_of_range_uv_values_and_counts_them` |
+| #2 | `sampler.cpp` 的 `texel()==nullptr` 静默给全 0 | **关**：debug-only 计数 | `texture.h:47` 的 `outOfRangeTexelSamples`（`sampler.cpp:55` bump）+ `ObjStats.uvOutOfRange`（`obj.cpp:144`）；测试 `texture_counts_out_of_range_texel_samples_in_debug`、`obj_keeps_out_of_range_uv_values_and_counts_them` |
 | #3 | mip 链的 alpha 平均没有测试 | **关**：补一条 | `box_downsample_averages_alpha_not_just_rgb`（`test_texture.cpp:68`，alpha 交替 0/255 ⇒ 平均 128） |
 | #8 | harness 退出码 = 失败数，POSIX 截断到 0–255 | **关**：夹到 1 | `tests/main.cpp:65`（`failed > 1 ? 1 : failed`），排在 M5 第一个提交 |
 | #4 | `FragmentOutput` 没有 alpha | **留**：混合需要颜色目标侧的 blend 状态，那是与 M6 的"线性空间"一起定的事，不该塞进一个 IO 里程碑 | M6 |

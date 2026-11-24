@@ -68,7 +68,9 @@ struct ObjStats {
 };
 
 // 解析 OBJ 文本。成功返回 true；失败（D6）返回 false、**out 清空**、err 非空且带行号与肇事文本。
-// warnings/stats 是累加出参（调用方给全新的，与 parseMtl 同一约定）。
+// warnings/stats 是累加出参，本函数**不得**重置它们。调用方按文件给全新的 warnings；
+// stats 则可能已带着别处的计数（loadModel 在调用本函数前把 MTL 的 unrecognized 合并进来，
+// 见 model.cpp 的合并点），所以"调用方一定给空表"这个假设是错的。
 //
 // **材质表的两条兜底规则（Ruling 46 / 收紧 3，materials 入参是只读 span，追加发生在 out 里）**：
 // (a) materials.empty() ⇒ out.materials **恰好一个** defaultMaterial()，全部 group 指它；

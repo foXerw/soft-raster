@@ -150,7 +150,9 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
     }
 
     // parseObj 自己填 materials（Ruling 46 的两条兜底），并产出几何 + 分组。
-    // 同样给全新的 warnings/stats（out.stats 此刻是全新的，因为 out 刚被清空）。
+    // warnings 是全新的一套；**stats 不是** —— out.stats 上面已经带着合并进来的 MTL 计数，
+    // 这里传进去让 parseObj 继续往里累加。这正是 HUD 的 UNRECOGNIZED 覆盖 OBJ+MTL 两侧的机制，
+    // 所以 parseObj **不得**重置 stats（它只 ++/+=，由 test_model 的合计断言钉住）。
     std::vector<std::string> objWarnings;
     if (!parseObj(text, materials, out.model, objWarnings, out.stats, err)) {
         err = lex::displayPath(objPath) + ": " + err;
