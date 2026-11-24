@@ -301,9 +301,14 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
 ### 8.1 叫醒休眠接口
 
 1. `normal_matrix_undoes_non_uniform_scale_for_normals` —— `model = scale(2,1,1)`，
-   法线 `n = normalize(1,1,0)`：**朴素变换**（直接用 model 的 3x3）得到的向量与表面**不垂直**，
-   `makeNormalMatrix` 得到的垂直。断言 `dot(n_out, tangent) ≈ 0`（1e-5），朴素版 `> 0.1`。
-   **这是"inverse-transpose 是几何必然不是仪式"的可执行证明。**
+   法线 `n = (1,1,0)/√2`，**并显式给出它所在的表面**：`t1 = (1,-1,0)/√2`、`t2 = (0,0,1)`。
+   缩放后 `t1' = (2,-1,0)/√2`、`t2' = (0,0,1)`。
+   - 朴素变换 `model * n = (2,1,0)/√2` ⇒ `dot(·, t1') = 1.5 ≠ 0`（断言 `> 0.1`）；
+   - `makeNormalMatrix` ⇒ `normalize(0.5,1,0) ≈ (0.4472,0.8944,0)` ⇒ 与 `t1'`、`t2'` 都 `≈ 0`（容差 `1e-5f`）。
+   **测试必须先断言前提**（`dot(n,t1) ≈ 0` 且 `dot(n,t2) ≈ 0`）再断言现象。
+   这条"inverse-transpose 是几何必然不是仪式"的可执行证明，第一版只写了"与表面不垂直"而没给出表面，
+   于是计划作者（我）顺手配了一个不可能的面（xy 平面配 `(1,1,0)/√2`）——
+   **规格里出现"表面/法线"这类成对对象时，两个都必须写死，只写一个等于把矛盾留给下游发现**（M6.0 的实现者抓的）。
 2. `worldPos_is_world_space_not_object_space` —— `model = translation(5,0,0)` ⇒
    `v.worldPos.x ≈ 5 + in.position.x`。**今天这条会红**，它就是"没人读"的证据。
 3. `normal_is_normalized_after_the_transform_not_before`。
