@@ -50,4 +50,24 @@ inline Mat4 makeLookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
     return r;
 }
 
+// 法线矩阵 = transpose(inverse(model 的 3x3))。奇异 ⇒ false 且不写 out（与 tryInvert 同约定）。
+//
+// 为什么是 inverse-transpose 而不是"惯例"：法线的定义性质是**垂直于表面切向**。
+// 非均匀缩放会同时改变切向与朴素变换后的法线，二者不再垂直 ——
+// 例：scale(2,1,1) 把切向 (1,-1,0) 变成 (2,-1,0)，把法线 (1,1,0)/√2 朴素地变成
+// (2,1,0)/√2，点积从 0 变成 3/√2。要求 (M⁻¹)ᵀn · Mt = nᵀ M⁻¹ M t = nᵀt = 0，
+// 唯一满足它的变换就是 (M⁻¹)ᵀ。可执行证明见
+// normal_matrix_undoes_non_uniform_scale_for_normals（那条断言就是这个几何事实本身）。
+//
+// 三个零件（upper3x3AsMat4 / tryInvert / transposed）都已在 mat.h 里且各有测试，
+// 这里只做组合，不重写任何数学。先取 3x3 再求逆：平移不参与法线变换，
+// 而 tryInvert 的相对阈值按整个 4x4 的量级算，带着平移列进去会污染那个量级。
+inline bool makeNormalMatrix(const Mat4& model, Mat4& out) {
+    const Mat4 u3 = model.upper3x3AsMat4();
+    Mat4 inv;
+    if (!Mat4::tryInvert(u3, inv)) return false;   // 奇异：out 保持被调用前的值
+    out = inv.transposed();
+    return true;
+}
+
 }  // namespace sr

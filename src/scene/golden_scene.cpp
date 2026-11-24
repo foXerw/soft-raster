@@ -1,5 +1,7 @@
 #include "scene/golden_scene.h"
 
+#include <cstdio>
+
 #include "math/transform.h"
 #include "render/builtin_shaders.h"
 #include "render/color.h"
@@ -80,7 +82,17 @@ void renderGoldenScene(RenderTarget& target, FrameStats* stats) {
     st.vu.model = goldenModel();
     st.vu.view = goldenView();
     st.vu.proj = goldenProjection(kGoldenWidth, kGoldenHeight);
-    st.vu.normalMatrix = Mat4::identity();
+    // M6.0：法线矩阵 = 该旋转本身（纯旋转的逆转置 = 自身），不再是单位阵。
+    // 今天没有任何 FS 读 worldNormal，所以参考图逐字节不变 —— 这正是本任务的验收；
+    // M6.2 起光照会读它（§8.1 #4 的测试钉住"等于旋转且不等于单位阵"）。
+    // 传入的 st.vu.model 两行前刚被赋为 goldenModel()，用同一份值避免两处漂移。
+    // 纯旋转构造上不会奇异；万一失败退回单位阵（last-good）并记诊断，不黑屏。
+    Mat4 nm;
+    if (!makeNormalMatrix(st.vu.model, nm)) {
+        nm = Mat4::identity();
+        std::fprintf(stderr, "[normal] golden makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
+    }
+    st.vu.normalMatrix = nm;
 
     BackendA backend;
     backend.draw(cube, st);
@@ -108,7 +120,17 @@ void renderGoldenSceneTextured(RenderTarget& target, FrameStats* stats) {
     st.vu.model = goldenModel();
     st.vu.view = goldenView();
     st.vu.proj = goldenProjection(kGoldenWidth, kGoldenHeight);
-    st.vu.normalMatrix = Mat4::identity();
+    // M6.0：法线矩阵 = 该旋转本身（纯旋转的逆转置 = 自身），不再是单位阵。
+    // 今天没有任何 FS 读 worldNormal，所以参考图逐字节不变 —— 这正是本任务的验收；
+    // M6.2 起光照会读它（§8.1 #4 的测试钉住"等于旋转且不等于单位阵"）。
+    // 传入的 st.vu.model 两行前刚被赋为 goldenModel()，用同一份值避免两处漂移。
+    // 纯旋转构造上不会奇异；万一失败退回单位阵（last-good）并记诊断，不黑屏。
+    Mat4 nm;
+    if (!makeNormalMatrix(st.vu.model, nm)) {
+        nm = Mat4::identity();
+        std::fprintf(stderr, "[normal] golden makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
+    }
+    st.vu.normalMatrix = nm;
     // baseColor 是**乘上去的材质 tint**（见 texturedFS），不是"没贴图时的兜底色"，
     // 所以这里显式给白：留着默认的 0.8 灰会让参考图整体暗一档，看起来像光照出了问题。
     st.fu.baseColor = LinearColor{1.0f, 1.0f, 1.0f};

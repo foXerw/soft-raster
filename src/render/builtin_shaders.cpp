@@ -7,10 +7,14 @@ ClipVertex transformVS(const VSIn& in, const VertexUniforms& u) {
 
     Varyings v;
     v.color = in.color;
-    // 法线用 normalMatrix（M6 才有非均匀缩放，但矩阵已经准备好了）
-    v.worldNormal = xyz(u.normalMatrix * makeVec4(in.normal, 0.0f));
+    // transformVS 不加光照（范围），但这两行必须改（D4）：
+    // 法线走 normalMatrix（makeNormalMatrix 产出的逆转置），且归一化在乘法**之后** ——
+    // scale(2,1,1) 下变换前归一化等于没归一化：乘法会重新改变长度（D4）。
+    v.worldNormal = normalize(xyz(u.normalMatrix * makeVec4(in.normal, 0.0f)));
     v.uv = in.uv;
-    v.worldPos = in.position;
+    // worldPos 是真世界空间（M6.0）。此前这里错赋成物体空间的 in.position，
+    // 而没有任何 FS 读它，所以错了也没人发现 —— 本章主题就是这个失效模式。
+    v.worldPos = xyz(u.model * makeVec4(in.position, 1.0f));
 
     ClipVertex out;
     out.clip = clip;

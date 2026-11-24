@@ -147,7 +147,15 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
                                   static_cast<float>(target.color.width) /
                                       static_cast<float>(target.color.height),
                                   scene.nearPlane, scene.farPlane);
-    vu.normalMatrix = sr::Mat4::identity();   // model 是单位阵，法线矩阵也就是单位阵
+    // M6.0：法线矩阵一律走 makeNormalMatrix（M6.9 的 grep 守卫禁止生产侧写单位阵字面量）。
+    // 这里的 model 恒为单位阵（旋转在轨道相机），构造上不会奇异；万一失败，
+    // last-good 就是单位阵本身 —— 记一条诊断，画面继续，不退出也不黑屏（M5.6 同原则）。
+    sr::Mat4 nm;
+    if (!sr::makeNormalMatrix(vu.model, nm)) {
+        nm = sr::Mat4::identity();
+        std::fprintf(stderr, "[normal] makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
+    }
+    vu.normalMatrix = nm;
 
     if (scene.model == nullptr) {
         // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——

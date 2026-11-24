@@ -1,6 +1,9 @@
 #include "loader/obj_scene.h"
 
+#include <cstdio>
+
 #include "math/mat.h"
+#include "math/transform.h"
 #include "render/color.h"
 #include "render/overlay_font.h"
 #include "render/pipeline.h"
@@ -14,14 +17,20 @@ void renderObjGoldenScene(const LoadedModel& m, RenderTarget& target, FrameStats
     goldenBackground(target.color);   // 与 M3/M4 同一份背景（收紧 5）
 
     // Ruling D15：锚 3 用 M4 的固定 pose，不用 fit 相机（spec §7.5 的那条对本锚豁免）。
-    // normalMatrix = identity 与 renderGoldenSceneTextured 一致（model 是旋转，
-    // 法线矩阵本该是它的逆转置，但 M4 参考图就是在 identity 下生成的 —— 锚 3 要的是
-    // 逐字节相同，不是"物理上更对"）。
+    // M6.0：法线矩阵从此等于 goldenModel() 那个旋转（纯旋转的逆转置 = 自身），
+    // 与 renderGoldenSceneTextured 一致地走 makeNormalMatrix。锚 3 的逐字节相同仍然成立：
+    // 今天没有任何 FS 读 worldNormal —— 画面不变不是"物理上更对"的让步，而是"没人读"的证据。
     VertexUniforms vu;
     vu.model = goldenModel();
     vu.view = goldenView();
     vu.proj = goldenProjection(kGoldenWidth, kGoldenHeight);
-    vu.normalMatrix = Mat4::identity();
+    // 纯旋转构造上不会奇异；万一失败退回单位阵（last-good）并记诊断，不黑屏。
+    Mat4 nm;
+    if (!makeNormalMatrix(vu.model, nm)) {
+        nm = Mat4::identity();
+        std::fprintf(stderr, "[normal] obj golden makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
+    }
+    vu.normalMatrix = nm;
 
     FragmentUniforms base;
     // baseColor 是乘性 tint：显式给白。drawModel 会按组覆写成材质的线性 Kd，
