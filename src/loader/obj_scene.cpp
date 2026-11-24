@@ -1,9 +1,6 @@
 #include "loader/obj_scene.h"
 
-#include <cstdio>
-
 #include "math/mat.h"
-#include "math/transform.h"
 #include "render/color.h"
 #include "render/overlay_font.h"
 #include "render/pipeline.h"
@@ -24,13 +21,9 @@ void renderObjGoldenScene(const LoadedModel& m, RenderTarget& target, FrameStats
     vu.model = goldenModel();
     vu.view = goldenView();
     vu.proj = goldenProjection(kGoldenWidth, kGoldenHeight);
-    // 纯旋转构造上不会奇异；万一失败退回单位阵（last-good）并记诊断，不黑屏。
-    Mat4 nm;
-    if (!makeNormalMatrix(vu.model, nm)) {
-        nm = Mat4::identity();
-        std::fprintf(stderr, "[normal] obj golden makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
-    }
-    vu.normalMatrix = nm;
+    // 纯旋转构造上不会奇异；万一失败 setNormalMatrix 退回单位阵（last-good）并记诊断，
+    // 不黑屏（P91/M6.3：兜底块四个生产点共用一份，见 pipeline.h）。
+    setNormalMatrix(vu, vu.model, "obj golden ");
 
     FragmentUniforms base;
     // baseColor 是乘性 tint：显式给白。drawModel 会按组覆写成材质的线性 Kd，

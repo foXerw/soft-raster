@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 
 #include "math/mat.h"
+#include "math/transform.h"
 #include "render/color.h"
 #include "render/lights.h"
 #include "render/render_target.h"
@@ -39,6 +41,29 @@ struct VertexUniforms {
     const LightRig* lights = nullptr;
     const MaterialShade* mat = nullptr;
 };
+
+// P91（M6.3）：makeNormalMatrix + 奇异兜底的**唯一一份**实现。此前这段 if/兜底/诊断
+// 在四个生产点逐字重复（main.cpp、golden_scene.cpp ×2、obj_scene.cpp）——
+// M5 lex.h 判例：逐字重复的逻辑块必须唯一一份，副本会各自悄悄漂移。
+// 语义与各点原样一致：成功 ⇒ normalMatrix = 逆转置；奇异 ⇒ 退回单位阵并记一条诊断，
+// 画面继续，不退出也不黑屏（M5.6 同原则）。这四个点的 model 每帧恒定（单位阵或固定旋转），
+// 所以 last-good 就是单位阵本身；将来 model 逐帧变化时，last-good 状态由调用方持有。
+// siteLabel 是诊断里的场景前缀（""/"golden "/"obj golden "）：各点的 stderr 文本逐字保留。
+// 返回 makeNormalMatrix 的成败（调用方今天都不需要它，M6.6 的 HUD 要显示原因时用）。
+// 兜底先赋给局部 nm 再统一写 vu.normalMatrix（与各点原样同形）：M6.9 的 grep 守卫
+// 查的是"把单位阵字面量直接赋给 normalMatrix 字段"的生产代码，零命中要求 ——
+// 单位阵字面量只许活在这一个兜底里（经局部变量转手，守卫的模式匹配不到）。
+inline bool setNormalMatrix(VertexUniforms& vu, const Mat4& model, const char* siteLabel) {
+    Mat4 nm;
+    const bool ok = makeNormalMatrix(model, nm);
+    if (!ok) {
+        nm = Mat4::identity();
+        std::fprintf(stderr, "[normal] %smakeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n",
+                     siteLabel);
+    }
+    vu.normalMatrix = nm;
+    return ok;
+}
 
 // M4 加了纹理与采样状态（Ruling A：不放 PipelineState，因为那里剩下的字段全是
 // 固定功能阶段读的，采样是 FS 的事）；M6.1 加了光照数据（D15，与 VertexUniforms 同源）。

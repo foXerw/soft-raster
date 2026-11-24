@@ -28,4 +28,24 @@ bool vertexColorFS(const FragmentInput& in, const FragmentUniforms& u, FragmentO
 // u.texture == nullptr 时退回 baseColor（见 pipeline.h 的理由）。
 bool texturedFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
 
+// Gouraud（spec §7.3 的 lambert_pervertex）：在**顶点**算完整光照，把结果插值到像素。
+// - 完整光照（Ruling 91/D25）：调 shadeBlinnPhong 而不是 shadeDiffuseOnly ——
+//   保留这个模式的唯一理由是观察高光带与 Mach band，没有高光的 Gouraud 没有带可摊开。
+// - 有效 albedo = 顶点色 × mat->diffuse（D17，线性空间；Kd 的乘法在 shadeBlinnPhong
+//   内部完成，VS 的实参只传顶点色）。这兑现 main.cpp 老路径里"M6 的光照 shader 还要它"
+//   那句承诺：顶点色从此是真消费者，不再休眠。
+// - lights == nullptr ⇒ unlit 早退：v.color = in.color（mat == nullptr 同样早退，
+//   没有材质可读，不发明默认材质）。不发明第四种模式、不加 bool。
+// - **不采样贴图**（VS 阶段没有屏幕导数，也绝不为它加采样）——见下面 FS 的注释。
+// MVP 与其余 varying 的填法和 transformVS 共用同一份实现（builtin_shaders.cpp 的
+// clipFromPosition），光照结果写进已有的 v.color 槽（D6：kVaryingFloatCount 仍是 12）。
+ClipVertex lambertVS(const VSIn& in, const VertexUniforms& u);
+
+// Gouraud 的 FS：直读插值后的 v.color（顶点光照结果），**一行**。
+// **它不读 u.texture / u.baseColor / u.lights**：带贴图的模型切到这个模式时贴图会
+// "消失"，只剩顶点光照的平滑渐变 —— 这是 D17 的设计（VS 不采样），不是贴图坏了。
+// 用户可见的解释必须在两处：这段 shader 选择注释，以及 M6.6 的 HUD 着色模式行。
+// 行为由 gouraud_ignores_the_texture_and_says_so_in_the_shader_choice 钉住。
+bool lambertPerVertexFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
+
 }  // namespace sr

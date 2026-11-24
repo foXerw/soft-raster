@@ -150,12 +150,8 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     // M6.0：法线矩阵一律走 makeNormalMatrix（M6.9 的 grep 守卫禁止生产侧写单位阵字面量）。
     // 这里的 model 恒为单位阵（旋转在轨道相机），构造上不会奇异；万一失败，
     // last-good 就是单位阵本身 —— 记一条诊断，画面继续，不退出也不黑屏（M5.6 同原则）。
-    sr::Mat4 nm;
-    if (!sr::makeNormalMatrix(vu.model, nm)) {
-        nm = sr::Mat4::identity();
-        std::fprintf(stderr, "[normal] makeNormalMatrix 失败（奇异 model），法线矩阵退回单位阵\n");
-    }
-    vu.normalMatrix = nm;
+    // P91（M6.3）：if/兜底/诊断块收进 setNormalMatrix（pipeline.h），四个生产点共用一份。
+    sr::setNormalMatrix(vu, vu.model, "");
 
     if (scene.model == nullptr) {
         // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——
@@ -166,7 +162,8 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         st.vertexShader = sr::transformVS;
         // M4 的可见成果：贴一张程序生成的 checker。
         // 顶点色路径（vertexColorFS）在这里退出画面，但 Mesh 里的 colors 仍然保留 ——
-        // M6 的光照 shader 还要它，而且 W 键看背面时"哪一面是哪个颜色"仍然读得出来。
+        // M6 的光照 shader 还要它（M6.3 的 lambertVS 已消费：有效 albedo = 顶点色 × Kd，
+        // D17，承诺兑现），而且 W 键看背面时"哪一面是哪个颜色"仍然读得出来。
         st.fragmentShader = sr::texturedFS;
         st.depthTest = true;
         st.depthWrite = true;

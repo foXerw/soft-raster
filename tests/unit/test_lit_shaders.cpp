@@ -1,10 +1,11 @@
 // M6.1：LightRig / MaterialShade 进 uniforms 的 plumbing 测试。
-// 本文件由 M6.1 创建；M6.3/M6.4 的 lit shader 用例后续也放这里。
+// M6.3 起追加 Gouraud（lambertVS + lambertPerVertexFS）的用例；M6.4 的逐像素用例也放这里。
 //
 // **分阶段完成**（简报 Step 1 的明示）：§8.1 #6 的完整形态是"改 rig 的 keyColor 与
-// MaterialShade::specular ⇒ Gouraud 与逐像素的输出同步变化"。本任务还没有 lit shader，
-// 所以这里只钉 plumbing 那半句 —— 指针单一真源 + drawModel 逐组填对；
-// "输出同步变化"那半句由 M6.3/M6.4 补全。读者不要以为这条已经测全。
+// MaterialShade::specular ⇒ Gouraud 与逐像素的输出同步变化"。M6.1 只钉 plumbing 那半句
+// （指针单一真源 + drawModel 逐组填对）；Gouraud 那半句由下方
+// lambertVS_writes_lit_color_into_the_existing_color_slot 补全（改 rig/mat ⇒ VS 输出同步变），
+// 逐像素那半句仍留给 M6.4。读者不要以为这条已经测全。
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -17,10 +18,17 @@
 #include "loader/model.h"
 #include "loader/mtl.h"
 #include "math/mat.h"
+#include "math/transform.h"
+#include "render/builtin_shaders.h"
 #include "render/color.h"
+#include "render/interpolate.h"
 #include "render/lights.h"
 #include "render/render_backend.h"
 #include "render/sampler.h"
+#include "render/shading.h"
+#include "render/texture.h"
+#include "render/triangle_setup.h"
+#include "render/viewport.h"
 #include "scene/mesh.h"
 #include "test_util.h"
 
@@ -102,7 +110,8 @@ class RecordingBackend final : public sr::RenderBackend {
         d.vuLights = st.vu.lights;
         d.fuLights = st.fu.lights;
         d.matPresent = st.vu.mat != nullptr && st.fu.mat != nullptr;
-        d.matSameObject = st.vu.mat == st.fu.mat;
+        // P93（M6.3）：两个 nullptr 也"相等"——不加非空前提，这条在"忘了填 mat"时恒绿。
+        d.matSameObject = st.vu.mat != nullptr && st.vu.mat == st.fu.mat;
         if (st.fu.mat != nullptr) d.mat = *st.fu.mat;
         draws.push_back(d);
     }
@@ -111,6 +120,55 @@ class RecordingBackend final : public sr::RenderBackend {
 constexpr int kW = 64;
 constexpr int kH = 64;
 constexpr uint32_t kBg = 0xFF000000u;
+
+// ---- M6.3：Gouraud 夹具 ------------------------------------------------------
+
+// 只开方向光的 rig：点光关（intensity=0，D24）、ambient 0、白光 intensity 1。
+// towardLight 是"朝光源"的方向；keyDirWorld 是"照向"（lights.h:15），所以取反。
+sr::LightRig keyOnlyRig(const sr::Vec3& towardLight) {
+    sr::LightRig rig;
+    rig.keyDirWorld = -towardLight;
+    rig.keyColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    rig.keyIntensity = 1.0f;
+    rig.pointIntensity = 0.0f;
+    rig.ambient = sr::LinearColor{0.0f, 0.0f, 0.0f};
+    rig.eyeWorld = sr::Vec3{0.0f, 5.0f, 0.0f};
+    return rig;
+}
+
+// 覆盖屏幕大部的四边形（两个三角形）：左半法线 (0,0,1)，右半朝 +x 倾 60°。
+// L=(0,0,1) 时左半 N·L=1、右半 N·L=0.5 ⇒ 亮度梯度**只来自光照**（顶点色全白）。
+// uv 铺满 [0,1]，texturedFS 能采到整张贴图。
+sr::Mesh gouraudQuad() {
+    sr::Mesh m;
+    m.positions = {{-0.8f, -0.8f, 0.5f}, {0.8f, -0.8f, 0.5f},
+                   {0.8f, 0.8f, 0.5f}, {-0.8f, 0.8f, 0.5f}};
+    const float s = std::sqrt(3.0f) / 2.0f;
+    m.normals = {{0.0f, 0.0f, 1.0f}, {s, 0.0f, 0.5f}, {s, 0.0f, 0.5f}, {0.0f, 0.0f, 1.0f}};
+    m.uvs = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    m.colors = {{1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}};
+    m.indices = {0, 1, 2, 0, 2, 3};
+    m.recomputeBounds();
+    return m;
+}
+
+// 渲一帧进**已就地构造**的 Canvas（Canvas 绝不按值返回，test_util.h）。
+// 剔除关掉：颜色与绕向无关（test_interpolate.cpp 的同款理由）。
+void drawQuad(Canvas& c, const sr::Mesh& mesh, sr::VertexShaderFn vs, sr::FragmentShaderFn fs,
+              const sr::VertexUniforms& vu, const sr::FragmentUniforms& fu, sr::FrameStats& s) {
+    c.rt.color.clear(kBg);
+    c.rt.depth.clear();
+    sr::PipelineState st;
+    st.target = &c.rt;
+    st.vertexShader = vs;
+    st.fragmentShader = fs;
+    st.vu = vu;
+    st.fu = fu;
+    st.cull.backfaceCull = false;
+    st.stats = &s;
+    sr::BackendA backend;
+    backend.draw(mesh, st);
+}
 
 }  // namespace
 
@@ -185,8 +243,12 @@ SR_TEST(lights_and_material_reach_both_stages_from_one_source) {
         SR_ASSERT_NEAR(d.mat.shininess, mat.shininess, 1e-6f);
     }
     // 夹具判别力自检：两组的数必须真的不同，否则上面的逐组断言在交换变异下恒绿。
+    // P92（M6.3）：四个字段逐项自检 —— 只钉 specular/shininess 时，未来有人把 Kd/Ka
+    // 改成两组同值，diffuse↔ambient 对调之类的交换变异会静默变绿。
     const sr::MaterialShade& a = rec.draws[0].mat;
     const sr::MaterialShade& b = rec.draws[1].mat;
+    SR_ASSERT(std::fabs(a.diffuse.r - b.diffuse.r) > 0.01f);
+    SR_ASSERT(std::fabs(a.ambient.r - b.ambient.r) > 0.01f);
     SR_ASSERT(std::fabs(a.specular.r - b.specular.r) > 0.01f);
     SR_ASSERT(std::fabs(a.shininess - b.shininess) > 1.0f);
 }
@@ -430,4 +492,249 @@ SR_TEST(shininess_is_stored_raw_and_survives_draw_model_fill) {
     SR_ASSERT_NEAR(rec.draws[0].mat.shininess, 0.0f, 1e-6f);
     SR_ASSERT_NEAR(rec.draws[1].mat.shininess, 0.5f, 1e-6f);
     SR_ASSERT_NEAR(rec.draws[2].mat.shininess, 100000.0f, 1e-6f);
+}
+
+// ---- M6.3 Step 1: Gouraud —— lambertVS + lambertPerVertexFS ------------------
+
+SR_TEST(lambertVS_writes_lit_color_into_the_existing_color_slot) {
+    // D6：光照结果写进**已有**的 v.color 槽（rgb = 线性光色），不新增 varying。
+    SR_ASSERT_EQ(sr::kVaryingFloatCount, 12);
+    SR_ASSERT_EQ(sizeof(sr::Varyings), 12 * sizeof(float));
+
+    sr::VertexUniforms vu = identityVu();
+    sr::LightRig rig = keyOnlyRig({0.0f, 1.0f, 0.0f});   // L = (0,1,0)
+    sr::MaterialShade mat;                                // Kd 1 / Ka 0
+    mat.specular = sr::LinearColor{0.35f, 0.35f, 0.35f};
+    mat.shininess = 64.0f;
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::VSIn in;
+    in.position = sr::Vec3{0.0f, 0.0f, 0.0f};
+    in.normal = sr::Vec3{0.0f, 1.0f, 0.0f};
+    in.uv = sr::Vec2{0.25f, 0.75f};
+    in.color = sr::Vec4{0.5f, 0.5f, 0.5f, 1.0f};
+
+    const sr::ClipVertex cv = sr::lambertVS(in, vu);
+    // N·L=1；P=原点、eye=(0,5,0) ⇒ V=L ⇒ H=N ⇒ N·H=1 ⇒ 高光取峰值 Ks×1。
+    // Ruling 91：Gouraud 在顶点算**完整**光照 ⇒ 0.5（漫反射）+ 0.35（高光）= 0.85。
+    // 若用 shadeDiffuseOnly 会得 0.5 —— 没有高光带可摊开，§8.2 #7b 退化成"没有 vs 有"。
+    // 期望是**线性**值：再解码一次（srgbToLinear(0.85)≈0.694）或编码往返都会红。
+    SR_ASSERT_NEAR(cv.v.color.x, 0.85f, 1e-5f);
+    SR_ASSERT_NEAR(cv.v.color.y, 0.85f, 1e-5f);
+    SR_ASSERT_NEAR(cv.v.color.z, 0.85f, 1e-5f);
+    SR_ASSERT_NEAR(cv.v.color.w, 1.0f, 1e-6f);
+
+    // MVP 与 transformVS 共用 clipFromPosition：clip 逐分量一致（不许逐字复制后漂移）。
+    const sr::ClipVertex ref = sr::transformVS(in, vu);
+    SR_ASSERT_NEAR(cv.clip.x, ref.clip.x, 1e-6f);
+    SR_ASSERT_NEAR(cv.clip.y, ref.clip.y, 1e-6f);
+    SR_ASSERT_NEAR(cv.clip.z, ref.clip.z, 1e-6f);
+    SR_ASSERT_NEAR(cv.clip.w, ref.clip.w, 1e-6f);
+    // 其余槽位照常填：M6.4 的逐像素 FS 与 debug 视图要读 worldNormal/worldPos。
+    expectVec3Near(cv.v.worldNormal, 0.0f, 1.0f, 0.0f, 1e-6f);
+    expectVec3Near(cv.v.worldPos, 0.0f, 0.0f, 0.0f, 1e-6f);
+    SR_ASSERT_NEAR(cv.v.uv.x, 0.25f, 1e-6f);
+    SR_ASSERT_NEAR(cv.v.uv.y, 0.75f, 1e-6f);
+
+    // 单一真源（D15）：经指针改 rig/mat ⇒ VS 输出同步变化（§8.1 #6 的 Gouraud 半句）。
+    rig.keyColor = sr::LinearColor{1.0f, 0.0f, 0.0f};
+    const sr::ClipVertex red = sr::lambertVS(in, vu);
+    SR_ASSERT_NEAR(red.v.color.x, 0.85f, 1e-5f);
+    SR_ASSERT_NEAR(red.v.color.y, 0.0f, 1e-5f);
+    SR_ASSERT_NEAR(red.v.color.z, 0.0f, 1e-5f);
+    rig.keyColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    mat.specular = sr::LinearColor{0.7f, 0.7f, 0.7f};
+    const sr::ClipVertex shiny = sr::lambertVS(in, vu);
+    SR_ASSERT_NEAR(shiny.v.color.x, 1.2f, 1e-5f);   // 0.5 + 0.7：高光确实在 VS 结果里
+
+    // 法线走 normalMatrix 而非 model：scale(2,1,1) 下 n=(1,1,0)/√2 ⇒ N_world=(1,2,0)/√5。
+    // 着色用 N_world·L = 2/√5 ≈ 0.8944；拿原始 in.normal 算会得 1/√2 ≈ 0.7071，差 0.187 ⇒ 红。
+    sr::VertexUniforms vs = identityVu();
+    vs.model = sr::Mat4::scale({2.0f, 1.0f, 1.0f});
+    SR_ASSERT(sr::makeNormalMatrix(vs.model, vs.normalMatrix));
+    sr::MaterialShade plain;   // Ks 0 / Ns 0：隔离漫反射
+    vs.lights = &rig;
+    vs.mat = &plain;
+    sr::VSIn sn;
+    sn.position = sr::Vec3{0.0f, 0.0f, 0.0f};
+    sn.normal = sr::normalize(sr::Vec3{1.0f, 1.0f, 0.0f});
+    sn.color = sr::Vec4{1.0f, 1.0f, 1.0f, 1.0f};
+    const sr::ClipVertex sc = sr::lambertVS(sn, vs);
+    SR_ASSERT_NEAR(sc.v.color.x, 0.894427191f, 1e-5f);
+    expectVec3Near(sc.v.worldNormal, 0.447213595f, 0.894427191f, 0.0f, 1e-5f);
+
+    // unlit：lights == nullptr ⇒ v.color = in.color（不是写死白，也不是黑）。
+    vu.lights = nullptr;
+    const sr::ClipVertex unlit = sr::lambertVS(in, vu);
+    SR_ASSERT_NEAR(unlit.v.color.x, 0.5f, 1e-6f);
+    SR_ASSERT_NEAR(unlit.v.color.y, 0.5f, 1e-6f);
+    SR_ASSERT_NEAR(unlit.v.color.z, 0.5f, 1e-6f);
+    SR_ASSERT_NEAR(unlit.v.color.w, 1.0f, 1e-6f);
+    SR_ASSERT_NEAR(unlit.clip.w, ref.clip.w, 1e-6f);   // 变换不受早退影响
+    // mat == nullptr 同样按 unlit 早退：没有材质可读，不发明默认材质（不是第四种模式）。
+    vu.lights = &rig;
+    vu.mat = nullptr;
+    const sr::ClipVertex noMat = sr::lambertVS(in, vu);
+    SR_ASSERT_NEAR(noMat.v.color.x, 0.5f, 1e-6f);
+}
+
+SR_TEST(gouraud_albedo_is_vertex_color_times_diffuse) {
+    // D17：albedo = 顶点色 × Kd（都在线性空间）。这兑现 main.cpp:161 的承诺
+    // （"M6 的光照 shader 还要它"）—— 顶点色不再是休眠字段。
+    // 夹具按简报：N·L=1、intensity=1、ambient 0、点光关、Ks=0 ⇒ 输出 = albedo 本身。
+    sr::VertexUniforms vu = identityVu();
+    sr::LightRig rig = keyOnlyRig({0.0f, 1.0f, 0.0f});
+    sr::MaterialShade mat;   // Kd 默认 (1,1,1)
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::VSIn in;
+    in.position = sr::Vec3{0.0f, 0.0f, 0.0f};
+    in.normal = sr::Vec3{0.0f, 1.0f, 0.0f};
+    in.color = sr::Vec4{0.5f, 0.5f, 0.5f, 1.0f};
+
+    const sr::ClipVertex a = sr::lambertVS(in, vu);
+    expectColorNear(sr::LinearColor{a.v.color.x, a.v.color.y, a.v.color.z},
+                    0.5f, 0.5f, 0.5f, 1e-5f);
+    mat.diffuse = sr::LinearColor{0.5f, 0.5f, 0.5f};
+    const sr::ClipVertex b = sr::lambertVS(in, vu);
+    expectColorNear(sr::LinearColor{b.v.color.x, b.v.color.y, b.v.color.z},
+                    0.25f, 0.25f, 0.25f, 1e-5f);
+    // **两次都断言**（简报原话）：只改一个系数无法区分"谁被乘了"。
+    // 忘乘 Kd ⇒ 第二次仍是 0.5；忘乘顶点色 ⇒ 第一次 1.0、第二次 0.5。都红。
+
+    // 三通道互异：通道对调 / "只取其中一个因子"的变异必须红（夹具判别力，Ruling 67）。
+    mat.diffuse = sr::LinearColor{0.9f, 0.7f, 0.5f};
+    in.color = sr::Vec4{0.8f, 0.6f, 0.4f, 1.0f};
+    const sr::ClipVertex c = sr::lambertVS(in, vu);
+    expectColorNear(sr::LinearColor{c.v.color.x, c.v.color.y, c.v.color.z},
+                    0.72f, 0.42f, 0.20f, 1e-5f);
+}
+
+SR_TEST(gouraud_ignores_the_texture_and_says_so_in_the_shader_choice) {
+    // Review Focus 5 / D17：VS 不采样贴图 ⇒ 切到 Gouraud 时贴图"消失"。这是设计不是 bug；
+    // 解释必须在读者会撞见的两处：builtin_shaders.h 的 shader 选择注释 + M6.6 的 HUD 行。
+    // 这里钉行为半句：挂任何贴图 / 改 baseColor，Gouraud 输出逐字节相同；
+    // 且与贴图通路**真的不同**（贴图确实消失了，不是"两条通路都没采到东西"的对称夹具）。
+    const sr::Mesh quad = gouraudQuad();
+    sr::LightRig rig = keyOnlyRig({0.0f, 0.0f, 1.0f});   // L = (0,0,1)
+    sr::MaterialShade mat;                                // Kd 1 / Ks 0 / Ns 0
+    sr::VertexUniforms vu = identityVu();
+    vu.lights = &rig;
+    vu.mat = &mat;
+
+    const sr::Texture checker =
+        sr::makeTexture(sr::makeCheckerImage(8, 8, sr::CheckerPalette{}), true);
+    const sr::Texture gray = sr::makeTexture(makeGrayImage(64, 64, grayXPlus1), true);
+
+    sr::FragmentUniforms fuA = baseFu();   // 挂棋盘
+    fuA.texture = &checker;
+    sr::FragmentUniforms fuB = baseFu();   // 不挂贴图
+    sr::FragmentUniforms fuC = baseFu();   // 挂另一张贴图
+    fuC.texture = &gray;
+    sr::FragmentUniforms fuD = fuA;        // baseColor 改掉：FS 也不许读它
+    fuD.baseColor = sr::LinearColor{1.0f, 0.0f, 0.0f};
+
+    Canvas a{kW, kH}, b{kW, kH}, c{kW, kH}, d{kW, kH}, e{kW, kH};
+    sr::FrameStats sa, sb, sc, sd, se;
+    drawQuad(a, quad, sr::lambertVS, sr::lambertPerVertexFS, vu, fuA, sa);
+    drawQuad(b, quad, sr::lambertVS, sr::lambertPerVertexFS, vu, fuB, sb);
+    drawQuad(c, quad, sr::lambertVS, sr::lambertPerVertexFS, vu, fuC, sc);
+    drawQuad(d, quad, sr::lambertVS, sr::lambertPerVertexFS, vu, fuD, sd);
+    // 对照：同一几何同一贴图的 unlit 贴图通路（transformVS + texturedFS）。
+    drawQuad(e, quad, sr::transformVS, sr::texturedFS, vu, fuA, se);
+
+    SR_ASSERT(sa.fragmentsWritten > 0);
+    SR_ASSERT(se.fragmentsWritten > 0);
+    SR_ASSERT(a.colorMem == b.colorMem);
+    SR_ASSERT(a.colorMem == c.colorMem);
+    SR_ASSERT(a.colorMem == d.colorMem);
+
+    // 判别力 ①：Gouraud 与贴图通路必须真的不同（贴图消失是可见事件）。
+    int diffAE = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x)
+            if (a.rt.color.readPacked(x, y) != e.rt.color.readPacked(x, y)) ++diffAE;
+    SR_ASSERT(diffAE > 100);
+    // 判别力 ②：两通路各自都不是平涂 —— Gouraud 有光照梯度，贴图通路有棋盘。
+    // （stub VS 直通顶点色时 Gouraud 全白，下面右半像素的闭式期望会红。）
+    SR_ASSERT(a.rt.color.readPacked(10, 32) != a.rt.color.readPacked(54, 32));
+    SR_ASSERT(e.rt.color.readPacked(10, 32) != e.rt.color.readPacked(54, 32));
+
+    // 闭式期望：四边形左半 N·L=1、右半 0.5，w 全 1 ⇒ 亮度沿 x 仿射。
+    // 屏幕 x：左缘 6.4、右缘 57.6（NDC ±0.8 → 64px）。像素中心 10.5 / 54.5：
+    //   f(x) = 1 - 0.5*(x-6.4)/51.2 ⇒ f(10.5)=0.9599609, f(54.5)=0.5302734。
+    // 容差 0.01：8-bit sRGB 量化在 1.0 附近约 ±0.0031（线性），远小于两值之差 0.43。
+    const sr::LinearColor left = sr::decodeSRGB(a.rt.color.readPacked(10, 32));
+    const sr::LinearColor right = sr::decodeSRGB(a.rt.color.readPacked(54, 32));
+    expectColorNear(left, 0.9599609f, 0.9599609f, 0.9599609f, 0.01f);
+    expectColorNear(right, 0.5302734f, 0.5302734f, 0.5302734f, 0.01f);
+}
+
+// ---- M6.3 Step 4: 插值的是**结果**，不是法线 ----------------------------------
+
+SR_TEST(gouraud_interpolates_the_result_not_the_normal) {
+    // 三个顶点法线两两相差 90°（简报的"相差 90°"夹具取其三顶点形态）。
+    // L=(1,0,0) ⇒ 三顶点亮度 (1,0,0)；重心（w 全相等 ⇒ 算术平均）= 1/3。
+    // "插值法线再算光照"给 normalize((1,1,1))·L = 1/√3 ≈ 0.5774 —— 差 0.244，
+    // 远大于 1e-5 容差：夹具判别力自检在下面显式断言，对称夹具不许存在。
+    sr::VertexUniforms vu = identityVu();
+    sr::LightRig rig = keyOnlyRig({1.0f, 0.0f, 0.0f});
+    sr::MaterialShade mat;   // Kd 1 / Ks 0 / Ns 0 / Ka 0
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::VSIn va, vb, vc;
+    va.position = sr::Vec3{-0.6f, -0.6f, 0.5f};  va.normal = sr::Vec3{1, 0, 0};
+    vb.position = sr::Vec3{0.6f, -0.6f, 0.5f};   vb.normal = sr::Vec3{0, 1, 0};
+    vc.position = sr::Vec3{0.0f, 0.6f, 0.5f};    vc.normal = sr::Vec3{0, 0, 1};
+    va.color = vb.color = vc.color = sr::Vec4{1, 1, 1, 1};
+    const sr::ClipVertex ca = sr::lambertVS(va, vu);
+    const sr::ClipVertex cb = sr::lambertVS(vb, vu);
+    const sr::ClipVertex cc = sr::lambertVS(vc, vu);
+    expectColorNear(sr::LinearColor{ca.v.color.x, ca.v.color.y, ca.v.color.z},
+                    1.0f, 1.0f, 1.0f, 1e-5f);
+    expectColorNear(sr::LinearColor{cb.v.color.x, cb.v.color.y, cb.v.color.z},
+                    0.0f, 0.0f, 0.0f, 1e-5f);
+    expectColorNear(sr::LinearColor{cc.v.color.x, cc.v.color.y, cc.v.color.z},
+                    0.0f, 0.0f, 0.0f, 1e-5f);
+
+    // 走生产的 clip→screen→setup→interpolate 通路（不读 8-bit 像素：量化 ~1/255
+    // 比 1e-5 容差大两个数量级，浮点插值结果必须在编码前断言）。
+    Canvas c{kW, kH};
+    const sr::Viewport vp = sr::Viewport::fromColorTarget(c.rt.color);
+    sr::ScreenVertex sv[3] = {vp.project(ca), vp.project(cb), vp.project(cc)};
+    sr::CullState noCull;
+    noCull.backfaceCull = false;
+    sr::TriangleSetup setup;
+    sr::SetupResult res;
+    SR_ASSERT(sr::setupTriangle(sv, c.rt.color, noCull, setup, res));
+    const float cx = (sv[0].pos.x + sv[1].pos.x + sv[2].pos.x) / 3.0f;
+    const float cy = (sv[0].pos.y + sv[1].pos.y + sv[2].pos.y) / 3.0f;
+    const sr::Interpolated ip = sr::interpolateAt(setup, cx, cy);
+
+    // w 全相等 ⇒ 重心 = 算术平均（equal_w_makes_the_centroid_the_arithmetic_mean）。
+    const float meanR = (ca.v.color.x + cb.v.color.x + cc.v.color.x) / 3.0f;
+    SR_ASSERT_NEAR(ip.v.color.x, meanR, 1e-5f);
+    SR_ASSERT_NEAR(ip.v.color.y, meanR, 1e-5f);
+    SR_ASSERT_NEAR(ip.v.color.z, meanR, 1e-5f);
+
+    sr::FragmentInput fi;
+    fi.screen = sr::Vec2{cx, cy};
+    fi.depth = ip.depth;
+    fi.v = ip.v;
+    sr::FragmentUniforms fu = baseFu();
+    fu.lights = &rig;   // 给"FS 重算光照"的变异留好可编译的上下文（它必须红）
+    fu.mat = &mat;
+    sr::FragmentOutput fo;
+    SR_ASSERT(sr::lambertPerVertexFS(fi, fu, fo));
+    expectColorNear(fo.color, 1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f, 1e-5f);
+
+    // 反例："插值法线（再归一化）后算光照"。插值把法线长度缩到 ~0.577，
+    // 归一化后 N·L = 1/√3 —— 与 Gouraud 的 1/3 差 0.244。
+    const sr::Vec3 nInterp = sr::normalize(ip.v.worldNormal);
+    const sr::LinearColor wrong =
+        sr::shadeBlinnPhong(nInterp, ip.v.worldPos, rig, mat, sr::LinearColor{1, 1, 1});
+    SR_ASSERT(std::fabs(fo.color.r - wrong.r) > 0.1f);
+    // 夹具判别力自检：两个答案必须差得远大于容差，否则本测试对称、毫无判别力。
+    SR_ASSERT(std::fabs(meanR - wrong.r) > 0.1f);
+    SR_ASSERT(std::fabs(wrong.r - 0.577350269f) < 1e-4f);   // 反例本身的闭式值
 }
