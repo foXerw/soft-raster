@@ -147,17 +147,27 @@ DRY 要求（"不许出现两份逐字重复的 `N·L`"）由这层组合满足�
 而"VS 不采样贴图"这条限制保留（D17），它给出 Gouraud 的第二个可见差别（无纹理细节），
 两者在 notes 里分开讲。
 
-（albedo 来源，原 D17）
+（albedo 来源，原 D17 —— **M6.3 纠正过一次，见 D26**）
 
 `main.cpp:161` 的注释写着 Mesh 的顶点色留着是因为"**M6 的光照 shader 还要它**"。
 第一版从没消费顶点色 ⇒ 那句话会变成第七个休眠承诺。
 
-- **D17（裁决）**：`lambertVS` 的 albedo = **顶点色 × `diffuse`**（VS 不采样贴图，也绝不为它加采样）；
-  `blinnPhongPerPixelFS` 的 albedo = **`(texture ? texel : white) × diffuse`**。
+- **D17（裁决，经 D26 修正）**：Gouraud 的基础色来自**顶点色**（VS 不采样贴图，也绝不为它加采样）；
+  逐像素的基础色来自 **`texture ? texel : white`**。
   于是"顶点色在 Gouraud 下有作用、在逐像素下被贴图取代"成为**代码事实**，
-  而那句注释被兑现；同时它给出一个免费的、可断言的差别：
-  无贴图球体上两者只差求值点，有顶点色的立方体上两者还差 albedo 来源。
-  代价：两个模式的 albedo 来源不同 ⇒ 断言必须成对设计（#7 用无贴图球，#12 用有贴图模型）。
+  而 `main.cpp:161` 那句旧注释被兑现；同时它给出一个免费的、可断言的差别：
+  无贴图球体上两者只差求值点，有顶点色的立方体上两者还差基础色来源。
+  代价：两个模式的基础色来源不同 ⇒ 断言必须成对设计（#7 用无贴图球，#12 用有贴图模型）。
+
+- **D26（M6.3 纠正，binding）**：`shadeDiffuseOnly` / `shadeBlinnPhong` 的 `albedo` 形参是
+  **未乘材质系数的基础色**（顶点色或纹素），因为函数内部就做 `kd = albedo × mat.diffuse`
+  （`shading.h:86`）。**调用方再乘一次 `diffuse` 就是乘两次**。
+  D17 第一版写的是"albedo = 顶点色 × `diffuse`"，字面照做会让 `Kd 0.5` 的模型暗一档
+  （`0.5² = 0.25`），而 M6.3 的 TDD 正是抓到了 `0.125 ≠ 0.25` 才发现规格的歧义。
+  契约因此定在**被调方乘 `Kd`**，调用方只传基础色；M6.4 的 `texel × diffuse` 是同一个陷阱的第二次落点，
+  已单独写进它的派发词。
+  **一般化**：一个形参叫 `albedo` 而另一个字段叫 `diffuse`，两者相乘的关系**必须在签名处写死由谁乘**；
+  "看起来是同义词"的参数名是双重乘算的温床（本项目第十一次文档错误）。
 
 ### 6.4 世界空间语义（本章修复主体）
 
@@ -205,9 +215,15 @@ DRY 要求（"不许出现两份逐字重复的 `N·L`"）由这层组合满足�
 
 ### 6.9 光照数学要可单测
 
-**D20（裁决）**：把光照本体抽成一个**自由纯函数**
-`LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const MaterialShade&, bool withTexture, const LinearColor& albedo)`，
-FS 只负责取插值结果 + 调它；Gouraud 的 VS 调同一个函数的"只算漫反射"分支（或同一函数 + `Ns` 视为 0）。
+**D20（裁决，签名与 Gouraud 分支经 R91/D26 修正）**：把光照本体抽成**自由纯函数**，
+FS/VS 只负责取插值结果 + 调它们。实际提交的签名是
+`LinearColor shadeDiffuseOnly(const Vec3& N, const Vec3& P, const LightRig&, const MaterialShade&, const LinearColor& albedo)`
+与 `LinearColor shadeBlinnPhong(同一组形参)` —— 没有 `bool withTexture` 这类布尔开关
+（参数表加宽是原裁决的代价猜测，实际用两个入口解决，见下）。
+**两个 shader 都调 `shadeBlinnPhong`**（R91：Gouraud 不调"只算漫反射"那一支，否则没有高光带可观察）；
+`shadeDiffuseOnly` 是 ambient+漫反射 的核心，被 `shadeBlinnPhong` 组合调用，
+于是 `N·L` 只有一份实现、且这个函数有消费者而不是休眠接口。
+`albedo` 形参的含义见 D26（未乘 `Kd` 的基础色）。
 理由：① 衰减/两项叠加/`Ns=0` 这些**必须能解析地测**，而"在整帧里找一个满足条件的像素"这类夹具
 在头灯几何下不存在（评审抓出的 #10 之错）；② 反目标 A1 说抽象止步于阶段边界——
 一个自由函数里的点积、半向量、`pow` 正是**直白的数学**，不是抽象。

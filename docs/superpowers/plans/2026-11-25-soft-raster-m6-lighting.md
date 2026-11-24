@@ -349,7 +349,9 @@ SR_TEST(gouraud_albedo_is_vertex_color_times_diffuse)              // D17
 
 `lambertVS`：MVP 三行与 `transformVS` **共用一个内部函数**（`clipFromPosition` 之类，
 放 `builtin_shaders.cpp` 匿名 namespace），不许逐字复制；
-然后 `albedo = xyz(in.color) * mat->diffuse`（`LinearColor` 层面），
+然后 `albedo = xyz(in.color)` —— **顶点色本身，不乘 `mat->diffuse`**：
+`shadeBlinnPhong` 内部已经做 `kd = albedo × mat.diffuse`（`shading.h:86`，D26），
+调用方再乘就是乘两次（M6.3 的 TDD 抓到 `0.125 ≠ 0.25` 才发现这里写歧义了）。
 `v.color = makeVec4(shadeBlinnPhong(N_world, P_world, *lights, *mat, albedo), 1.0f)`
 （**完整光照**，Ruling 91 —— Gouraud 的教科书定义就是"在顶点处算完整光照再插值结果"；
 若这里用 `shadeDiffuseOnly`，M6.8 的 #7b 会退化成"没有 vs 有"而不是"摊开 vs 收紧"）。
@@ -390,7 +392,10 @@ SR_TEST(phong_reads_the_interpolated_normal_and_position_not_the_vertex_ones) //
 
 - [ ] **Step 2: 跑测试确认失败 → Step 3: 实现**
 
-`albedo = (fu.texture ? texel.rgb : white) * mat->diffuse`（线性空间相乘，D16）；
+`albedo = (fu.texture ? texel.rgb : white)`（**不乘 `mat->diffuse`** —— `shadeBlinnPhong` 内部乘，
+D26 的同一个陷阱在 M6.4 的第二次落点，M6.3 的实现者已明确警告过；
+`Kd 0.5` 的模型若乘两次会暗一档，而症状看起来像"光照太暗"而不是"系数乘了两遍"）；
+D16 的"逐像素模式仍采样贴图"由这个 `albedo` 来源保证。
 `N = normalize(in.v.worldNormal)`（插值后长度会缩，**必须再归一化** —— 注释写明为什么不能省）；
 `out.color = shadeBlinnPhong(N, in.v.worldPos, *fu.lights, *fu.mat, albedo)`。
 
