@@ -110,7 +110,7 @@ M6.0 不是写 shader，是把休眠接口叫醒并**证明它醒着**：§8.3 �
 ① 凹凸变平、自阴影缺失更明显（N2 不做阴影，但这是真实视觉后果）；
 ② **"取一个只有方向光照到的点"这种测试夹具不存在**（§8.2 因此改用纯函数测试，D20）；
 ③ **高光峰值恰好落在正对相机的那个顶点上** ⇒ 第一版的 #7 断言在这个夹具上不成立（D19/§8.2 已改）。
-缓解：方向光默认与视线成约 35°；`[`/`]` 是**加法**步进且能走到 0（D18），所以"只留方向光"可达。
+缓解：方向光默认与视线成约 35°；`[`/`]` 是**加法**步进且能走到 0（D24），所以"只留方向光"可达。
 
 ### 6.2 光源与材质进 shader 的通路（评审 Q1 的裁决）
 
@@ -262,7 +262,7 @@ struct LightRig {
     float attenuateRadius = 1.0f;
     LinearColor ambient{};
     Vec3 eyeWorld{};
-    // "关掉一盏"= intensity 走到 0（D18 的加法步进保证可达），不用 bool。
+    // "关掉一盏"= intensity 走到 0（D24 的加法步进保证可达），不用 bool。
 };
 struct MaterialShade {          // D15
     LinearColor diffuse{1, 1, 1}, ambient{0, 0, 0}, specular{0, 0, 0};
@@ -373,7 +373,11 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
 
 - `3` 切着色模式（`unlit → Gouraud → Phong`）⇒ `InputState.cycleShadeMode` + `win32_window.cpp` 的 `case '3'`
   （那个 switch 的注释已说明数字键与字母键同族，`VK_1..VK_9` 在本机 SDK 的 `WINVER` 下不定义）。
-- `[` / `]` 调点光强度、`-` / `=` 调方向光强度，**加法步进 ±0.1，夹到 `[0, 3]`**（D18：可达 0 ⇒ "只留一盏"真能按出来）；
+- **D24（裁决）**：`[` / `]` 调点光强度、`-` / `=` 调方向光强度，用**加法步进 ±0.1 并夹到 `[0, 3]`**。
+  第一版写的是"±10% 一档"（乘法），那**永远到不了 0** —— 而 §6.1 明确承诺了
+  "关掉点光只留方向光"是一个可到达的状态，notes 的对比图也依赖它。
+  乘法步进还有一个更隐蔽的后果：从默认值出发按 N 下与按 N 上不对称，"回到默认"要靠 `0` 键而不是按回去。
+  代价：0 附近一档就是 10% 的相对变化，微调手感比乘法粗 —— 用 `0` 键复位默认来补。
   `A` 切衰减；`0` 把两盏灯与衰减恢复到默认。
 - 命令行：`--key-color --key-dir --key-intensity --point-color --point-pos --point-intensity
   --ambient --ambient-color --attenuate --attenuate-radius --shade`，全部走 `Parser::nextFloat/nextString` 风格。
