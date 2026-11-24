@@ -152,6 +152,86 @@ sr::Mesh gouraudQuad() {
     return m;
 }
 
+// ---- M6.4：逐像素夹具 --------------------------------------------------------
+
+// 四顶点法线全 (0,0,1) 的四边形：L=(0,0,1) 时 N·L 处处 = 1（相同法线的插值不变），
+// 亮度差**只可能来自贴图** —— 把光照梯度从贴图判别里隔离出去。uv 铺满 [0,1]。
+sr::Mesh litFlatQuad() {
+    sr::Mesh m;
+    m.positions = {{-0.8f, -0.8f, 0.5f}, {0.8f, -0.8f, 0.5f},
+                   {0.8f, 0.8f, 0.5f}, {-0.8f, 0.8f, 0.5f}};
+    m.normals = {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f},
+                 {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
+    m.uvs = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    m.colors = {{1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}};
+    m.indices = {0, 1, 2, 0, 2, 3};
+    m.recomputeBounds();
+    return m;
+}
+
+// 缩小（minified）贴图夹具：uv 在 51.2px 的屏幕边上跨 u∈[0,9]、v∈[0,4.5]，
+// 且 u/v 的梯度**不对称、带非零 off-diagonal 分量**（仿射解：u = 4.5 + 5X + 0.625Y，
+// v = 2.25 + 0.3125X + 2.5Y，X/Y 为世界坐标）：
+//   dudx = 5/32 = 0.15625      dudy = -0.625/32 = -0.01953125
+//   dvdx = 0.3125/32           dvdy = -2.5/32 = -0.078125
+// 配 **64×32 非方形**纹理 ⇒ rhoX = |(10, 0.3125)| ≈ 10.005、rhoY = |(1.25, 2.5)| ≈ 2.795
+// ⇒ rho = max ≈ 10.005 ⇒ lod ≈ 3.32（level 3 + frac 0.32 的三线性混合）。
+// 不对称 + 非方形是判别力：梯度分量抄错源（gradV.x ← gradU.x）改 rhoX ⇒ 可观测；
+// 纯 gradU↔gradV 对调给 rho ≈ 5.04（level 2）⇒ 也可观测 —— 方形纹理下它会因
+// max(rhoX,rhoY) 对称而字节等价（第一轮变异验证的 M04b 实测如此，换非方形后杀）。
+sr::Mesh phongMipQuad() {
+    sr::Mesh m;
+    m.positions = {{-0.8f, -0.8f, 0.5f}, {0.8f, -0.8f, 0.5f},
+                   {0.8f, 0.8f, 0.5f}, {-0.8f, 0.8f, 0.5f}};
+    m.normals = {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f},
+                 {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
+    m.uvs = {{0.0f, 0.0f}, {8.0f, 0.5f}, {9.0f, 4.5f}, {1.0f, 4.0f}};
+    m.colors = {{1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}};
+    m.indices = {0, 1, 2, 0, 2, 3};
+    m.recomputeBounds();
+    return m;
+}
+
+// r/g/b 两两互异的测试图（r = x*4+1, g = y*4+1, b = 128）。灰度图在通道对调变异下
+// 恒等 —— Ruling 67 的对称夹具教训：夹具必须在对调操作下给出不同的数。
+sr::ImageRGBA8 makeChannelDistinctImage(int w, int h) {
+    sr::ImageRGBA8 img;
+    img.width = w;
+    img.height = h;
+    img.rgba.assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4u, 0);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const size_t at = (static_cast<size_t>(y) * static_cast<size_t>(w) +
+                               static_cast<size_t>(x)) * 4u;
+            img.rgba[at] = static_cast<uint8_t>(x * 4 + 1);
+            img.rgba[at + 1] = static_cast<uint8_t>(y * 4 + 1);
+            img.rgba[at + 2] = 128;
+            img.rgba[at + 3] = 255;
+        }
+    }
+    return img;
+}
+
+// 高光带半高宽：行 y=32 解码到**线性**（sRGB 空间的半高 ≠ 线性半高，encode 曲线非线性），
+// 取峰值，数包含峰位的 ≥ peak/2 连续段。peakOut 回传线性峰值。
+int highlightWidthAtHalfMax(const Canvas& c, float& peakOut) {
+    float vals[kW];
+    int peakX = 0;
+    float peak = 0.0f;
+    for (int x = 0; x < kW; ++x) {
+        vals[x] = sr::decodeSRGB(c.rt.color.readPacked(x, 32)).r;
+        if (vals[x] > peak) { peak = vals[x]; peakX = x; }
+    }
+    peakOut = peak;
+    if (!(peak > 0.0f)) return 0;
+    const float half = peak * 0.5f;
+    int x0 = peakX;
+    while (x0 > 0 && vals[x0 - 1] >= half) --x0;
+    int x1 = peakX;
+    while (x1 < kW - 1 && vals[x1 + 1] >= half) ++x1;
+    return x1 - x0 + 1;
+}
+
 // 渲一帧进**已就地构造**的 Canvas（Canvas 绝不按值返回，test_util.h）。
 // 剔除关掉：颜色与绕向无关（test_interpolate.cpp 的同款理由）。
 void drawQuad(Canvas& c, const sr::Mesh& mesh, sr::VertexShaderFn vs, sr::FragmentShaderFn fs,
@@ -737,4 +817,338 @@ SR_TEST(gouraud_interpolates_the_result_not_the_normal) {
     // 夹具判别力自检：两个答案必须差得远大于容差，否则本测试对称、毫无判别力。
     SR_ASSERT(std::fabs(meanR - wrong.r) > 0.1f);
     SR_ASSERT(std::fabs(wrong.r - 0.577350269f) < 1e-4f);   // 反例本身的闭式值
+}
+
+// ---- M6.4 Step 1: 逐像素 Blinn-Phong ------------------------------------------
+
+SR_TEST(textured_model_keeps_the_texture_under_phong) {
+    // §8.2 #12 / D16：逐像素模式**仍采样贴图**，输出必须随纹素变化。
+    // 夹具：四顶点法线全 (0,0,1)、L=(0,0,1) ⇒ N·L 处处 1，亮度差只来自贴图。
+    // Kd = 0.5（≠1，D26）：双重乘算给 0.25 而不是 0.5，差一倍，不可能 missed；
+    // Kd==1 的夹具对"谁乘了 Kd"是空断言（M6.3 评审的原话）。
+    // r/g/b 互异（makeChannelDistinctImage）：通道对调变异必须红（Ruling 67）。
+    const sr::Mesh quad = litFlatQuad();
+    sr::LightRig rig = keyOnlyRig({0.0f, 0.0f, 1.0f});
+    sr::MaterialShade mat;                                // Ka 0 / Ks 0 / Ns 0
+    mat.diffuse = sr::LinearColor{0.5f, 0.5f, 0.5f};
+    sr::VertexUniforms vu = identityVu();
+    vu.lights = &rig;
+    vu.mat = &mat;
+    const sr::Texture tex = sr::makeTexture(makeChannelDistinctImage(64, 64), true);
+    sr::FragmentUniforms fu = baseFu();                   // ClampEdge + Nearest + 无 mip
+    fu.texture = &tex;
+    fu.lights = &rig;
+    fu.mat = &mat;
+    // baseColor ≠ 白：lit 通路不许读它（albedo = texel / 白，tint 是 unlit 的旋钮，D27 语境）。
+    fu.baseColor = sr::LinearColor{1.0f, 0.5f, 0.25f};
+
+    Canvas a{kW, kH};
+    sr::FrameStats sa;
+    drawQuad(a, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fu, sa);
+    SR_ASSERT(sa.fragmentsWritten > 1000);
+
+    // 纹素定位（闭式推导）：屏幕 x∈[6.4,57.6] ↔ u∈[0,1]、y∈[6.4,57.6] ↔ v∈[1,0]（v 轴朝上）。
+    // 像素中心 (10.5,10.5)：u = 4.1/51.2 = 0.080078125 ⇒ 列 floor(5.125) = 5；
+    //                        v = 47.1/51.2 = 0.919921875 ⇒ 行 floor(58.875) = 58。
+    // (20.5,10.5)：u = 14.1/51.2 = 0.275390625 ⇒ 列 floor(17.625) = 17；行同 58。
+    // 图公式 r = x*4+1、g = y*4+1、b = 128 ⇒ A=(21,233,128)、B=(69,233,128)。
+    // 期望 = srgb8ToLinear(byte) × Kd × N·L(=1)。srgb8ToLinear 是 256 项 LUT（color.h），
+    // 两工具链逐位一致；解码曲线本身由 test_color 钉，这里钉的是**接线**：
+    // 采到对的纹素、Kd 恰好乘一次、通道没对调。
+    const sr::LinearColor expA{sr::srgb8ToLinear(21) * 0.5f, sr::srgb8ToLinear(233) * 0.5f,
+                               sr::srgb8ToLinear(128) * 0.5f};
+    const sr::LinearColor expB{sr::srgb8ToLinear(69) * 0.5f, sr::srgb8ToLinear(233) * 0.5f,
+                               sr::srgb8ToLinear(128) * 0.5f};
+    const sr::LinearColor gotA = sr::decodeSRGB(a.rt.color.readPacked(10, 10));
+    const sr::LinearColor gotB = sr::decodeSRGB(a.rt.color.readPacked(20, 10));
+    // 容差 0.01 的算术：8-bit 量化的线性半步长 = (dlinear/ds)/255/2，
+    // dlinear/ds = (2.4/1.055)·((s+0.055)/1.055)^1.4 ≤ 2.4/1.055 ≈ 2.275（s=1 处最大）
+    // ⇒ 半步长 ≤ 2.275/510 ≈ 0.00446 < 0.01（全值域一致成立，不挑采样点）。
+    // 夹具判别力：两像素 r 通道差 = (srgb8ToLinear(69)−srgb8ToLinear(21))×0.5 ≈ 0.026 ≫ 0.01。
+    expectColorNear(gotA, expA.r, expA.g, expA.b, 0.01f);
+    expectColorNear(gotB, expB.r, expB.g, expB.b, 0.01f);
+    // **变化存在**的证明（简报：不许只断言单值）：两个采到不同纹素的像素必须不同。
+    SR_ASSERT(a.rt.color.readPacked(10, 10) != a.rt.color.readPacked(20, 10));
+    SR_ASSERT(std::fabs(gotA.r - gotB.r) > 0.02f);
+    SR_ASSERT(std::fabs(expA.r - expB.r) > 0.02f);   // 夹具自检：期望值本身差得开
+
+    // 无贴图对照：albedo = 白 ⇒ 输出 = Kd = 0.5 灰（不是 baseColor 的 tint）。
+    // 与贴图帧同一像素必须不同 ⇒ 贴图真的参与了（杀"albedo 恒白"变异）。
+    sr::FragmentUniforms fuPlain = fu;
+    fuPlain.texture = nullptr;
+    Canvas b{kW, kH};
+    sr::FrameStats sb;
+    drawQuad(b, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fuPlain, sb);
+    const sr::LinearColor plain = sr::decodeSRGB(b.rt.color.readPacked(10, 10));
+    expectColorNear(plain, 0.5f, 0.5f, 0.5f, 0.01f);   // 半步长上界 0.00446 < 0.01
+    SR_ASSERT(b.rt.color.readPacked(10, 10) != a.rt.color.readPacked(10, 10));
+}
+
+SR_TEST(phong_highlight_is_tighter_than_gouraud_on_the_same_rig) {
+    // 为 M6.8 #7b 铺路：同一 rig/材质/几何，两模式各渲一次，比高光带半高宽。
+    // UV 球的极点在 ±y（mesh.cpp），而深度测试留下 z 更小的半球 ⇒ 眼与 key 光都放 −z：
+    // −z 赤道点 (0,0,−r) 在 stacks=6 / slices=8 时恰是网格顶点（phi=90°、theta=270°），
+    // 该顶点 N = V = L = (0,0,−1) ⇒ N·H = 1 ⇒ 两模式峰值都 = Ks = 0.35（D19：不饱和）。
+    // Kd=0 / Ka=0 / ambient=0 ⇒ 输出 = 纯高光，半高宽不受漫反射底噪污染。
+    const sr::Mesh sphere = sr::makeUVSphere(0.8f, 6, 8);
+    sr::LightRig rig;
+    rig.keyDirWorld = sr::Vec3{0.0f, 0.0f, 1.0f};   // 照向 +z ⇒ 朝光源 = (0,0,−1)
+    rig.keyColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    rig.keyIntensity = 1.0f;
+    rig.pointIntensity = 0.0f;
+    rig.ambient = sr::LinearColor{0.0f, 0.0f, 0.0f};
+    rig.eyeWorld = sr::Vec3{0.0f, 0.0f, -5.0f};
+    sr::MaterialShade mat;
+    mat.diffuse = sr::LinearColor{0.0f, 0.0f, 0.0f};
+    mat.specular = sr::LinearColor{0.35f, 0.35f, 0.35f};
+    mat.shininess = 64.0f;
+    sr::VertexUniforms vu = identityVu();
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::FragmentUniforms fu = baseFu();
+    fu.lights = &rig;
+    fu.mat = &mat;
+
+    Canvas p{kW, kH}, g{kW, kH};
+    sr::FrameStats sp, sg;
+    drawQuad(p, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fu, sp);
+    drawQuad(g, sphere, sr::lambertVS, sr::lambertPerVertexFS, vu, fu, sg);
+    SR_ASSERT(sp.fragmentsWritten > 500);
+    SR_ASSERT(sg.fragmentsWritten > 500);
+
+    float peakP = 0.0f, peakG = 0.0f;
+    const int wP = highlightWidthAtHalfMax(p, peakP);
+    const int wG = highlightWidthAtHalfMax(g, peakG);
+    // 峰值容差 0.03 的两个误差源（算术）：① 量化半步长 ≤ 0.00446（上一条的推导）；
+    // ② Gouraud 的峰在**顶点** (32,32)，像素中心 (32.5,32.5) 偏移 ~0.7px，向 12.8px 外
+    //    的近零邻点线性插值 ⇒ 峰值下拉 ~0.35×0.7/12.8 ≈ 0.019。合计 < 0.03 ≪ 0.35。
+    SR_ASSERT_NEAR(peakP, 0.35f, 0.03f);
+    SR_ASSERT_NEAR(peakG, 0.35f, 0.03f);
+    // 半高宽：逐像素的 N·H^64 ≥ 0.5 带 ≈ ±8.4° ⇒ ~7-8px；Gouraud 把顶点峰值线性摊到
+    // 30° 外的近零邻点 ⇒ ~13-18px。margin 2px > 量化引起的阈值抖动（±1px）。
+    SR_ASSERT(wP >= 3);
+    SR_ASSERT(wG >= wP + 2);   // 逐像素更紧 —— 本测试的存在理由
+    SR_ASSERT(wG <= 40);       // 不是平涂（pow(x,0)==1 的白饼变异给宽 64）
+    int diff = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x)
+            if (p.rt.color.readPacked(x, y) != g.rt.color.readPacked(x, y)) ++diff;
+    SR_ASSERT(diff > 50);      // 两模式真的不同（不是"都没高光"的对称夹具）
+}
+
+SR_TEST(phong_reads_the_interpolated_normal_and_position_not_the_vertex_ones) {
+    // ---- 子夹具 A：点光 + 相同法线 ⇒ 亮度差只可能来自**插值后的 P** ----
+    // 大三角形（~1380px），三顶点法线全 (0,0,1)，点光 (−1.2,−0.6,0.9)：
+    // 距 A(−0.9,−0.6,0.5) 为 0.5 ⇒ N·L = 0.4/0.5 = 0.8；距 B(0.9,−0.6,0.5) 为 √4.57
+    // ⇒ N·L ≈ 0.187112。逐像素在 AB 中点 P=(0,−0.6,0.5)：N·L = 0.4/√1.6 ≈ 0.316228
+    // ⇒ ×Kd0.5 = 0.158114；逐顶点（Gouraud）插值两顶点结果 ⇒ (0.8+0.187112)/2×0.5
+    // = 0.246778。差 0.0887，对 1e-5 容差是四个数量级 —— 不是 1e-6 的装饰夹具。
+    sr::Mesh tri;
+    tri.positions = {{-0.9f, -0.6f, 0.5f}, {0.9f, -0.6f, 0.5f}, {0.0f, 0.9f, 0.5f}};
+    tri.normals = {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f}};
+    tri.uvs = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.5f, 1.0f}};
+    tri.colors = {{1, 1, 1, 1}, {1, 1, 1, 1}, {1, 1, 1, 1}};
+    tri.indices = {0, 1, 2};
+    tri.recomputeBounds();
+
+    sr::LightRig rig;                    // 只开点光（key 关、ambient 0、无衰减）
+    rig.keyIntensity = 0.0f;
+    rig.pointPosWorld = sr::Vec3{-1.2f, -0.6f, 0.9f};
+    rig.pointColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    rig.pointIntensity = 1.0f;
+    rig.attenuate = false;
+    rig.ambient = sr::LinearColor{0.0f, 0.0f, 0.0f};
+    rig.eyeWorld = sr::Vec3{0.0f, 0.0f, 5.0f};   // Ks=0 ⇒ V 无关
+    sr::MaterialShade mat;
+    mat.diffuse = sr::LinearColor{0.5f, 0.5f, 0.5f};   // Kd ≠ 1（D26）
+    sr::VertexUniforms vu = identityVu();
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::FragmentUniforms fu = baseFu();
+    fu.lights = &rig;
+    fu.mat = &mat;
+
+    // 整帧证据：左半与右半亮度必须不同（"逐顶点"实现给不出这种点光梯度）。
+    Canvas frame{kW, kH};
+    sr::FrameStats sf;
+    drawQuad(frame, tri, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fu, sf);
+    SR_ASSERT(sf.fragmentsWritten > 300);
+    const sr::LinearColor left = sr::decodeSRGB(frame.rt.color.readPacked(5, 50));
+    const sr::LinearColor right = sr::decodeSRGB(frame.rt.color.readPacked(58, 50));
+    SR_ASSERT(frame.rt.color.readPacked(5, 50) != frame.rt.color.readPacked(58, 50));
+    SR_ASSERT(left.r - right.r > 0.15f);   // 闭式 ≈0.366 vs ≈0.097，差 ≈0.27 ≫ 量化 0.009
+
+    // 解析证据：走生产 viewport→setup→interpolateAt 通路（w 全 1 ⇒ 插值是仿射的，
+    // 屏幕中点 = 世界中点），在编码前断言浮点结果（8-bit 量化 ~1/255 比 1e-5 大两个量级）。
+    sr::VSIn va, vb, vc;
+    va.position = tri.positions[0];  va.normal = tri.normals[0];  va.uv = tri.uvs[0];
+    vb.position = tri.positions[1];  vb.normal = tri.normals[1];  vb.uv = tri.uvs[1];
+    vc.position = tri.positions[2];  vc.normal = tri.normals[2];  vc.uv = tri.uvs[2];
+    const sr::ClipVertex ca = sr::transformVS(va, vu);
+    const sr::ClipVertex cb = sr::transformVS(vb, vu);
+    const sr::ClipVertex cc = sr::transformVS(vc, vu);
+    Canvas c{kW, kH};
+    const sr::Viewport vp = sr::Viewport::fromColorTarget(c.rt.color);
+    sr::ScreenVertex sv[3] = {vp.project(ca), vp.project(cb), vp.project(cc)};
+    sr::CullState noCull;
+    noCull.backfaceCull = false;
+    sr::TriangleSetup setup;
+    sr::SetupResult res;
+    SR_ASSERT(sr::setupTriangle(sv, c.rt.color, noCull, setup, res));
+    const float mx = (sv[0].pos.x + sv[1].pos.x) / 2.0f;
+    const float my = (sv[0].pos.y + sv[1].pos.y) / 2.0f;
+    const sr::Interpolated ip = sr::interpolateAt(setup, mx, my);
+    expectVec3Near(ip.v.worldPos, 0.0f, -0.6f, 0.5f, 1e-5f);   // P 是插值出来的中点
+    expectVec3Near(ip.v.worldNormal, 0.0f, 0.0f, 1.0f, 1e-6f);
+
+    sr::FragmentInput fi;
+    fi.screen = sr::Vec2{mx, my};
+    fi.depth = ip.depth;
+    fi.v = ip.v;
+    fi.gradU = sr::Vec2{setup.dudx, setup.dudy};
+    fi.gradV = sr::Vec2{setup.dvdx, setup.dvdy};
+    sr::FragmentOutput fo;
+    SR_ASSERT(sr::blinnPhongPerPixelFS(fi, fu, fo));
+    // 0.5 × 0.4/√1.6 = 0.158113883。只有 +×÷√（IEEE 正确舍入），无 pow ⇒
+    // 两工具链差 ~1e-7；容差 1e-5 是其百倍，又比 Gouraud 差值 0.0887 小四个量级。
+    expectColorNear(fo.color, 0.158113883f, 0.158113883f, 0.158113883f, 1e-5f);
+
+    // 反例：**逐顶点**答案（生产 lambertVS 的顶点结果取平均 —— w 全 1 ⇒ 中点 = 算术平均）。
+    const sr::ClipVertex la = sr::lambertVS(va, vu);
+    const sr::ClipVertex lb = sr::lambertVS(vb, vu);
+    SR_ASSERT_NEAR(la.v.color.x, 0.4f, 1e-5f);          // 0.5 × 0.8
+    SR_ASSERT_NEAR(lb.v.color.x, 0.0935556f, 1e-5f);   // 0.5 × 0.4/√4.57 = 0.0935556
+    const float gouraudMid = (la.v.color.x + lb.v.color.x) * 0.5f;
+    SR_ASSERT_NEAR(gouraudMid, 0.2467778f, 1e-5f);
+    // 夹具判别力自检：逐像素与逐顶点/两顶点答案都必须差得远大于容差。
+    SR_ASSERT(std::fabs(fo.color.r - gouraudMid) > 0.05f);    // 实际差 0.0887
+    SR_ASSERT(std::fabs(fo.color.r - la.v.color.x) > 0.1f);   // 顶点 A 答案 0.4
+    SR_ASSERT(std::fabs(fo.color.r - lb.v.color.x) > 0.05f);  // 顶点 B 答案 0.0936
+
+    // ---- 子夹具 B：插值把法线缩短 ⇒ FS 必须再归一化 ----
+    // 三顶点法线两两 90°（M6.3 同形），L=(1,0,0)，Kd=0.5。重心插值 N=(1/3,1/3,1/3)，
+    // 长度 1/√3 ≈ 0.57735 —— 先断言**长度本身**：归一化被丢掉时这里就是证据。
+    // 归一化后 N·L = 1/√3 ⇒ 输出 0.288675；不归一化 N·L = 1/3 ⇒ 0.166667，差 0.122。
+    // 点积对 N 线性 ⇒ "不归一化的逐像素"在方向光下恰 ≡ Gouraud（顶点均值 1/3）：
+    // 这条断言同时杀"忘 normalize"与"退化成逐顶点"两个变异。
+    sr::LightRig rig2 = keyOnlyRig({1.0f, 0.0f, 0.0f});
+    sr::VertexUniforms vu2 = identityVu();
+    vu2.lights = &rig2;
+    vu2.mat = &mat;
+    sr::VSIn na, nb, nc;
+    na.position = va.position;  na.normal = sr::Vec3{1, 0, 0};  na.uv = va.uv;
+    nb.position = vb.position;  nb.normal = sr::Vec3{0, 1, 0};  nb.uv = vb.uv;
+    nc.position = vc.position;  nc.normal = sr::Vec3{0, 0, 1};  nc.uv = vc.uv;
+    const sr::ClipVertex ca2 = sr::transformVS(na, vu2);
+    const sr::ClipVertex cb2 = sr::transformVS(nb, vu2);
+    const sr::ClipVertex cc2 = sr::transformVS(nc, vu2);
+    sr::ScreenVertex sv2[3] = {vp.project(ca2), vp.project(cb2), vp.project(cc2)};
+    sr::TriangleSetup setup2;
+    sr::SetupResult res2;
+    SR_ASSERT(sr::setupTriangle(sv2, c.rt.color, noCull, setup2, res2));
+    const float cx = (sv2[0].pos.x + sv2[1].pos.x + sv2[2].pos.x) / 3.0f;
+    const float cy = (sv2[0].pos.y + sv2[1].pos.y + sv2[2].pos.y) / 3.0f;
+    const sr::Interpolated ip2 = sr::interpolateAt(setup2, cx, cy);
+    const float nLen = sr::length(ip2.v.worldNormal);
+    SR_ASSERT_NEAR(nLen, 0.577350269f, 1e-5f);   // 插值真的把长度缩到 1/√3
+    SR_ASSERT(nLen < 0.9f);                      // 夹具判别力：不是单位长度
+    sr::FragmentInput fi2;
+    fi2.screen = sr::Vec2{cx, cy};
+    fi2.depth = ip2.depth;
+    fi2.v = ip2.v;
+    fi2.gradU = sr::Vec2{setup2.dudx, setup2.dudy};
+    fi2.gradV = sr::Vec2{setup2.dvdx, setup2.dvdy};
+    sr::FragmentUniforms fu2 = baseFu();
+    fu2.lights = &rig2;
+    fu2.mat = &mat;
+    sr::FragmentOutput fo2;
+    SR_ASSERT(sr::blinnPhongPerPixelFS(fi2, fu2, fo2));
+    expectColorNear(fo2.color, 0.288675135f, 0.288675135f, 0.288675135f, 1e-5f);
+    SR_ASSERT(std::fabs(fo2.color.r - 1.0f / 6.0f) > 0.1f);   // 实际差 0.122
+    SR_ASSERT(std::fabs(0.288675135f - 1.0f / 6.0f) > 0.1f);  // 两个闭式答案差得开
+}
+
+SR_TEST(phong_with_null_lights_falls_back_to_texturedFS_output) {
+    // D27：lights == nullptr ⇒ 与 texturedFS **逐字节相同**。比较对象是 texturedFS 的
+    // **实际输出**（同一输入两条通路各渲一帧），不是手算值 —— 等价钉在两条代码路径之间。
+    // 无光路径用 fu.baseColor（M4 的 tint 旋钮），不是 mat->diffuse（光照材质）：
+    // 夹具刻意 mat.diffuse ≠ baseColor（且 mat.ambient 是第三个值），"unlit 读材质"变异当场红。
+    // 贴图是**缩小**表面（phongMipQuad + 64×32 纹理：rho≈10 ⇒ level 3 三线性）：
+    // 丢梯度会退到 level 0，而 level 0 输出在本夹具上与 mip 输出必须不同（下方判别力自检）。
+    // 注意分两条等式钉（第一轮变异验证抓到的缺口）：lights=nullptr 的等式走 unlit 委托，
+    // 不经过 lit 分支的 sample() ⇒ 梯度使用还必须由 **lit 分支**的缩小等式钉（判别力③）。
+    const sr::Mesh quad = phongMipQuad();
+    const sr::Texture tex = sr::makeTexture(makeGrayImage(64, 32, grayXPlus1), true);
+    sr::MaterialShade mat;
+    mat.diffuse = sr::LinearColor{0.25f, 0.5f, 0.75f};   // ≠ baseColor
+    mat.ambient = sr::LinearColor{0.75f, 0.25f, 0.5f};   // ≠ diffuse ≠ baseColor（Ruling 67 第二值）
+    sr::FragmentUniforms fu = baseFu();
+    fu.texture = &tex;
+    fu.sampler = sr::SamplerState{sr::WrapMode::Repeat, sr::WrapMode::Repeat,
+                                  sr::FilterMode::Trilinear, true};
+    fu.baseColor = sr::LinearColor{1.0f, 0.5f, 0.25f};
+    fu.mat = &mat;                     // lights 保持 nullptr：mat 在场也不许读
+    const sr::VertexUniforms vu = identityVu();
+
+    Canvas p{kW, kH}, t{kW, kH}, n{kW, kH};
+    sr::FrameStats sp, st, sn;
+    drawQuad(p, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fu, sp);
+    drawQuad(t, quad, sr::transformVS, sr::texturedFS, vu, fu, st);
+    SR_ASSERT(sp.fragmentsWritten > 1000);
+    SR_ASSERT(st.fragmentsWritten > 1000);
+    SR_ASSERT(p.colorMem == t.colorMem);   // D27 的等式：两条代码路径的实际输出
+
+    // 判别力①：本夹具真的在缩小 —— useMip=false（= 梯度自由变体的输出，SamplerState
+    // 注释：Trilinear+无 mip 实测 Lod{0,0}）必须与 mip 帧不同，否则上面的相等是空断言。
+    sr::FragmentUniforms fuNoMip = fu;
+    fuNoMip.sampler.useMip = false;
+    drawQuad(n, quad, sr::transformVS, sr::texturedFS, vu, fuNoMip, sn);
+    int diffTN = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x)
+            if (t.rt.color.readPacked(x, y) != n.rt.color.readPacked(x, y)) ++diffTN;
+    SR_ASSERT(diffTN > 100);
+
+    // 判别力②：lights 非空但 mat == nullptr ⇒ 同样早退（M6.3 语义：不发明默认材质）。
+    sr::LightRig rig = keyOnlyRig({0.0f, 0.0f, 1.0f});
+    sr::FragmentUniforms fuNoMat = fu;
+    fuNoMat.lights = &rig;
+    fuNoMat.mat = nullptr;
+    Canvas p2{kW, kH}, t2{kW, kH};
+    sr::FrameStats sp2, st2;
+    drawQuad(p2, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fuNoMat, sp2);
+    drawQuad(t2, quad, sr::transformVS, sr::texturedFS, vu, fuNoMat, st2);
+    SR_ASSERT(p2.colorMem == t2.colorMem);
+
+    // 判别力③：**lit 分支**的梯度使用。上面的等式 lights=nullptr ⇒ 走 unlit 委托，
+    // lit 分支的 sample() 一行都没跑 —— 丢梯度变异在那里不可能红（第一轮 M03 实测存活）。
+    // 这里 Kd=1、N·L=1（quad 法线全 (0,0,1)，L=(0,0,1)）、Ks=0、Ka=0、ambient=0、
+    // baseColor=白 ⇒ lit 输出 = 纹素本身 = texturedFS 输出，逐字节相等。
+    // 逐字节（而非 ±1）在这里是良定的：四顶点法线相同 ⇒ 插值平面是常量 ⇒ N=(0,0,1) 精确、
+    // ndl=1 精确，×1.0 与 +0.0 都是精确运算 ⇒ 两条通路对同一 TexelF 位模式给出相同输出
+    // （MSVC 与 g++ 两侧实测均逐字节相等）。
+    // 零梯度/错梯度会改 mip 级（判别力①已证 mip ≠ level 0）⇒ 等式红。
+    sr::LightRig rigFlat = keyOnlyRig({0.0f, 0.0f, 1.0f});
+    sr::MaterialShade kd1;               // 默认 Kd 1 / Ka 0 / Ks 0 / Ns 0
+    sr::FragmentUniforms fuLit = fu;
+    fuLit.lights = &rigFlat;
+    fuLit.mat = &kd1;
+    fuLit.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    Canvas p4{kW, kH}, t4{kW, kH};
+    sr::FrameStats sp4, st4;
+    drawQuad(p4, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fuLit, sp4);
+    drawQuad(t4, quad, sr::transformVS, sr::texturedFS, vu, fuLit, st4);
+    SR_ASSERT(sp4.fragmentsWritten > 1000);
+    SR_ASSERT(p4.colorMem == t4.colorMem);
+
+    // 无贴图：两条通路都退回 baseColor（不是白、不是黑）。
+    sr::FragmentUniforms fuPlain = fu;
+    fuPlain.texture = nullptr;
+    Canvas p3{kW, kH}, t3{kW, kH};
+    sr::FrameStats sp3, st3;
+    drawQuad(p3, quad, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fuPlain, sp3);
+    drawQuad(t3, quad, sr::transformVS, sr::texturedFS, vu, fuPlain, st3);
+    SR_ASSERT(p3.colorMem == t3.colorMem);
+    const sr::LinearColor tint = sr::decodeSRGB(p3.rt.color.readPacked(32, 32));
+    expectColorNear(tint, 1.0f, 0.5f, 0.25f, 0.01f);   // 量化半步长上界 0.00446 < 0.01
 }

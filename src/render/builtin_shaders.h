@@ -48,4 +48,18 @@ ClipVertex lambertVS(const VSIn& in, const VertexUniforms& u);
 // 行为由 gouraud_ignores_the_texture_and_says_so_in_the_shader_choice 钉住。
 bool lambertPerVertexFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
 
+// 逐像素 Blinn-Phong（spec §7.3 的 blinn_phong）：插值法线/位置，在**每个像素**算完整光照。
+// - albedo = 纹素（有贴图）或白（无贴图），**未乘 Kd 的基础色**（D26/Ruling 93）：
+//   shadeBlinnPhong 内部做 kd = albedo × mat.diffuse，这里预乘会得 Kd²（0.5 ⇒ 0.25，
+//   症状读起来像"光照太暗"而不是"系数乘了两遍"）。lit 模式不读 baseColor ——
+//   那是 unlit 的 tint 旋钮，光照材质系数在 MaterialShade 里。
+// - 插值法线长度会缩（单位向量的加权平均是弦不是弧），shading.h 的契约要求单位 N ⇒
+//   FS 必须再 normalize；丢掉它 N·L 按缩短比例变小，方向光下恰退化成 Gouraud（点积线性）。
+// - lights == nullptr（或 mat == nullptr，与 lambertVS 同一早退语义）⇒ 与 texturedFS
+//   **逐字节相同**（D27）：无光路径用 fu.baseColor 而不是 mat->diffuse —— 两个漫反射
+//   来源不许各定义一种"unlit"。贴图采样带 gradU/gradV（与 texturedFS 同一表达式），
+//   丢梯度会让 mip 选择静默退化成恒 level 0（M4 的成果在 M6 里被重新打破）。
+// 行为由 test_lit_shaders.cpp 的 phong_* 与 textured_model_keeps_the_texture_under_phong 钉住。
+bool blinnPhongPerPixelFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
+
 }  // namespace sr

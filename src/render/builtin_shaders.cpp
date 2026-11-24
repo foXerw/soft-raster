@@ -89,4 +89,31 @@ bool lambertPerVertexFS(const FragmentInput& in, const FragmentUniforms&, Fragme
     return true;
 }
 
+bool blinnPhongPerPixelFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out) {
+    // D27：unlit ⇒ 直接走 texturedFS 的表达式（委托调用，等价由
+    // phong_with_null_lights_falls_back_to_texturedFS_output 对两条通路的实际输出逐字节钉住）。
+    // 无光路径的颜色来源是 fu.baseColor（app 的 tint 旋钮，M4 语义），**不是** mat->diffuse
+    // （光照材质）—— 两个漫反射来源若各定义一种"unlit"，M4 golden 与交互立方体会悄悄漂移。
+    // mat == nullptr 与 lights == nullptr 共用早退（lambertVS 的 M6.3 语义：不发明默认材质）。
+    if (u.lights == nullptr || u.mat == nullptr) return texturedFS(in, u, out);
+    // D26/Ruling 93：实参是**未乘 Kd 的基础色** —— shadeBlinnPhong 内部做
+    // kd = cmul(albedo, mat.diffuse)（shading.h 的契约，test_shading 钉着）。
+    // 按简报字面预乘 mat->diffuse 会得 Kd²：Kd 0.5 的模型暗一档（0.25 而不是 0.5），
+    // 症状读起来像"光照太暗"而不是"系数乘了两遍"（M6.3 抓过的同一陷阱的第二次落点）。
+    // 采样必须带 gradU/gradV（与 texturedFS 同一表达式）：丢梯度会让 mip 选择静默
+    // 退化成恒 level 0 —— M4 的成果在 M6 里被重新打破，且没有 golden 会发现
+    // （M4 golden 不走这个 FS）。D27 测试的缩小夹具钉住这一点。
+    LinearColor albedo{1.0f, 1.0f, 1.0f};
+    if (u.texture != nullptr) {
+        const TexelF c = sample(*u.texture, u.sampler, in.v.uv.x, in.v.uv.y, in.gradU, in.gradV);
+        albedo = LinearColor{c.r, c.g, c.b};   // TexelF 已在采样时解码到线性，不再解码
+    }
+    // 插值是单位向量的加权平均：弦短于弧，长度必缩（顶点法线全同时除外）。
+    // shading.h 的边界：N 必须已归一化，被调方不替调用方做 ⇒ 这里必须 normalize。
+    // 丢掉它 N·L 按缩短比例变小；点积对 N 线性 ⇒ 方向光下恰退化成 Gouraud 的答案。
+    const Vec3 N = normalize(in.v.worldNormal);
+    out.color = shadeBlinnPhong(N, in.v.worldPos, *u.lights, *u.mat, albedo);
+    return true;
+}
+
 }  // namespace sr
