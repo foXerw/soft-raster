@@ -10,6 +10,7 @@
 #include "loader/image_tga.h"   // loadTgaFile（我们自己的解析器，.tga 走这里，Ruling 63）
 #include "loader/lex.h"         // lex::displayPath（Ruling 62：消息里的路径不用 .string()）
 #include "render/builtin_shaders.h"  // transformVS / texturedFS
+#include "render/lights.h"      // MaterialShade（M6.1：着色需要的四个数）
 #include "render/sampler.h"     // makeTexture
 
 namespace sr {
@@ -226,6 +227,13 @@ void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& targe
     st.stats = stats;
     // cull / depthTest / depthWrite 用 PipelineState 的默认值（与生产 draw 调用点一致）。
 
+    // M6.1（D15）：逐组一份 MaterialShade，栈上存储、循环外复用同一块 ——
+    // 指针只活在这一次 drawRange 内（同步调用），不 push 进容器（C5：无谓的分配）。
+    // vu.mat 与 fu.mat 指向**同一个**对象（单一真源）：M6.3 的 lambertVS 要在 VS 侧
+    // 读 diffuse（albedo = 顶点色 × Kd），两个阶段必须读同一份。
+    // 为什么不是 const Material*：Material 还带着 name/diffuseMap/opacity，
+    // 着色层不该读（见 lights.h 的 MaterialShade 声明处注释）。
+    MaterialShade shade;
     for (const MeshGroup& g : m.model.groups) {
         // 材质下标防御：parseObj 保证合法，越界只跳过该组，不越界读 materials。
         if (g.material < 0 || g.material >= static_cast<int32_t>(m.model.materials.size()))
@@ -233,6 +241,14 @@ void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& targe
         const Material& mat = m.model.materials[static_cast<size_t>(g.material)];
         FragmentUniforms fu = base;          // 保留调用方的 sampler 等
         fu.baseColor = mat.diffuse;          // 线性 Kd（parseMtl 已解码，D5）
+        // 四个数原样抄（颜色已在 parseMtl 解码，这里不再动曲线）；
+        // shininess 原样直传（含 0）—— 夹取与 Ns==0 的判断都在 shading.h（M6.2）。
+        shade.diffuse = mat.diffuse;
+        shade.ambient = mat.ambient;
+        shade.specular = mat.specular;
+        shade.shininess = mat.shininess;
+        fu.mat = &shade;
+        st.vu.mat = &shade;
         // 槽位防御（终审 M1/P21）：上面 g.material 只对 materials.size() 做了界检查，slot 还需
         // 自己对 textures.size() 做界检查 —— 冻结不变式（Ruling 66）只禁 textures 载入后增长，
         // 不禁这几个 public vector 互相失配（M8 的 binning 直接消费它们）。texturePerMaterial

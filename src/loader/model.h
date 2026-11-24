@@ -106,6 +106,10 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
 // 逐组提交：每个 MeshGroup 一次 drawRange（C5：虚调用按 draw call 一次）。
 // 每组的 FragmentUniforms 从 base 拷贝，再**按该组材质**覆写 baseColor = Kd（线性）、
 // texture = 该材质的贴图指针（无贴图 ⇒ nullptr，texturedFS 退回 baseColor 纯色，Ruling 32）。
+// M6.1（D15）：同时把该组材质的 diffuse/ambient/specular/shininess 抄进一个栈上
+// MaterialShade（循环外复用同一块存储），vu.mat 与 fu.mat 指向同一份（单一真源）；
+// shininess 原样直传（含 0），夹取归 shading.h（M6.2）。lights 指针从调用方的
+// vu/base 原样透传（nullptr = unlit），drawModel 不发明光照模式。
 // base.sampler 原样保留（调用方决定 ClampEdge/Trilinear 等）。vertexShader/fragmentShader
 // 用内置的 transformVS/texturedFS。stats 透传给 drawRange（drawCalls 按组累加）。
 //

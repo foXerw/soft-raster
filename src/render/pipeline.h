@@ -4,6 +4,7 @@
 
 #include "math/mat.h"
 #include "render/color.h"
+#include "render/lights.h"
 #include "render/render_target.h"
 #include "render/sampler.h"
 #include "render/stats.h"
@@ -32,10 +33,15 @@ struct VertexUniforms {
     Mat4 view;
     Mat4 proj;
     Mat4 normalMatrix;  // transpose(inverse(model)) 的 3x3 部分，M6 的法线变换用
+    // M6.1（D15）：与 FragmentUniforms 指向**同一份**每帧对象（单一真源，不是两份拷贝）。
+    // lights == nullptr ⇒ unlit（lit shader 的早退语义；不发明第四种模式、不加 bool）。
+    // mat 由 drawModel 逐组覆写（M6.3 的 lambertVS 要读 diffuse：albedo = 顶点色 × Kd）。
+    const LightRig* lights = nullptr;
+    const MaterialShade* mat = nullptr;
 };
 
-// M6 会往这里加光源。M4 加了纹理与采样状态（Ruling A：不放 PipelineState，
-// 因为那里剩下的字段全是固定功能阶段读的，采样是 FS 的事）。
+// M4 加了纹理与采样状态（Ruling A：不放 PipelineState，因为那里剩下的字段全是
+// 固定功能阶段读的，采样是 FS 的事）；M6.1 加了光照数据（D15，与 VertexUniforms 同源）。
 struct FragmentUniforms {
     LinearColor baseColor{0.8f, 0.8f, 0.8f};
     // nullptr = 这张 draw call 没有贴图，texturedFS 退回 baseColor。
@@ -43,6 +49,9 @@ struct FragmentUniforms {
     // 于是能立刻知道是纹理没接上；画黑的话，第一个怀疑对象会变成整条管线。
     const Texture* texture = nullptr;
     SamplerState sampler;
+    // 与 VertexUniforms 的同名字段指向同一份对象（D15）。lights == nullptr ⇒ unlit。
+    const LightRig* lights = nullptr;
+    const MaterialShade* mat = nullptr;
 };
 
 struct FragmentInput {
