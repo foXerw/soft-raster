@@ -24,6 +24,7 @@
 #include "app/path.h"
 #include "app/scene.h"
 #include "app/surface.h"
+#include "app/view_mode.h"   // M6.5（D23）：视图 → FS 选择 + 帧末 sink
 #include "bench/timer.h"
 #include "loader/bmp_writer.h"
 #include "loader/lex.h"   // displayPath（Ruling 62：消息里的路径不用 .string()）
@@ -61,7 +62,10 @@ const wchar_t* kWindowTitle = L"soft-raster — 纯 CPU 软件光栅化";
 // 从这里到 M2 之间唯一的变化是"这一帧的内容由谁产生"。
 bool g_gradientBackground = false;   // 由 --gradient 打开
 bool g_showBackfaces = false;   // 临时开关：M7 会做成正式的视图选项
-sr::DebugViewSink g_sink;       // 'V' 循环：color → depth → gray
+sr::DebugViewSink g_sink;       // 帧末 sink：view 每帧由 planView 写入（D23）
+// 'V' 循环：color → depth → gray → normal（M6.5）。状态是 ViewMode 而不是
+// sink.view —— normal 根本不是 sink（它是 FS 视图），旧枚举装不下它（D23）。
+app::ViewMode g_viewMode = app::ViewMode::Color;
 
 // M4 的两个采样旋钮（`1` 与 `2`）。它们是**应用状态**而不是管线状态：
 // PipelineState 每帧重建，而这两个变量的生命期是整个程序 —— 暂停时反复按也保持得住。
@@ -153,6 +157,10 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     // P91（M6.3）：if/兜底/诊断块收进 setNormalMatrix（pipeline.h），四个生产点共用一份。
     sr::setNormalMatrix(vu, vu.model, "");
 
+    // M6.5（D23）：视图 → "这次提交用哪个 FS + 帧末走哪个 sink"。normal 是 FS 覆写，
+    // depth/gray 是帧末后处理 —— 两种机制并存，分界写在 sink.h / app/view_mode.h。
+    const app::ViewPlan plan = app::planView(g_viewMode, sr::texturedFS);
+
     if (scene.model == nullptr) {
         // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——
         // 无 --obj 的离屏图与 M4 golden 是它的回归证据。立方体本体在 scene.cpp
@@ -164,7 +172,8 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // 顶点色路径（vertexColorFS）在这里退出画面，但 Mesh 里的 colors 仍然保留 ——
         // M6 的光照 shader 还要它（M6.3 的 lambertVS 已消费：有效 albedo = 顶点色 × Kd，
         // D17，承诺兑现），而且 W 键看背面时"哪一面是哪个颜色"仍然读得出来。
-        st.fragmentShader = sr::texturedFS;
+        // M6.5（D23）：normal 视图覆写 FS；其余视图 plan 原样带着 texturedFS。
+        st.fragmentShader = plan.useFragmentShader ? plan.fragmentShader : sr::texturedFS;
         st.depthTest = true;
         st.depthWrite = true;
         st.cull.backfaceCull = !g_showBackfaces;
@@ -196,7 +205,11 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // 重新发明第二条采样状态路径（M4 旋钮的自然延伸）。
         base.sampler.filter = g_filter;
         base.sampler.useMip = g_useMip;
-        sr::drawModel(backend, *scene.model, target, vu, base, &stats);
+        // M6.5（D23）：导入模型路径同样吃视图的 FS 覆写（drawModel 的 fsOverride
+        // 接缝；nullptr = 既有 texturedFS 语义）。否则切到 NORMAL 时 HUD 说法线、
+        // 像素却仍是贴图 —— 画面与标签撒谎比没有视图更糟。
+        sr::drawModel(backend, *scene.model, target, vu, base, &stats,
+                      plan.useFragmentShader ? plan.fragmentShader : nullptr);
     }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
@@ -204,6 +217,9 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     const uint32_t fg = sr::encodeSRGB({1.0f, 1.0f, 1.0f});
     const uint32_t bg = sr::encodeSRGB({0.015f, 0.015f, 0.02f});
     // 调试视图在文字之前应用：HUD 必须永远可读，否则切到深度视图时文字被一起冲掉。
+    // sink 选择来自 plan（D23）：normal 视图的 plan.sink 是 Color（恒等），
+    // 法线像素绝不被后处理改写；depth/gray 才真正改写整帧。
+    g_sink.view = plan.sink;
     g_sink.present(target);
 
     sr::drawText(target.color, 4, 4, statusLine, fg, bg, 2);
@@ -219,10 +235,12 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     } else {
         char line2[256];
         const int unrecognized = scene.model ? scene.model->stats.unrecognized : 0;
+        // M6.5：第二行显示 plan.name（当前视图）—— 切到 NORMAL 时画面是法线色，
+        // 标签必须同步说出来（"该看到什么必须 always 在画面上"）。
         std::snprintf(line2, sizeof(line2),
-                      "%s  DC %lld  UNRECOGNIZED %d  P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT R=RELOAD F=FIT ESC=QUIT",
-                      hudAscii(scene.modelLabel).c_str(), static_cast<long long>(stats.drawCalls),
-                      unrecognized);
+                      "VIEW %s  %s  DC %lld  UNRECOGNIZED %d  P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT R=RELOAD F=FIT ESC=QUIT",
+                      plan.name, hudAscii(scene.modelLabel).c_str(),
+                      static_cast<long long>(stats.drawCalls), unrecognized);
         sr::drawText(target.color, 4, line2Y, line2,
                      sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
     }
@@ -379,11 +397,13 @@ int runWindow(const app::AppOptions& o) {
         if (input.togglePause) paused = !paused;
         if (input.toggleWireframe) g_showBackfaces = !g_showBackfaces;   // 借 W 键做 M2 的穿帮演示
         if (input.cycleView) {
-            const int next = (static_cast<int>(g_sink.view) + 1) % 3;
-            g_sink.view = static_cast<sr::DebugViewSink::View>(next);
-            static const char* kNames[] = {"COLOR", "DEPTH", "GRAY"};
+            // M6.5（D23）：%3 → %4，循环 ViewMode（color → depth → gray → normal）。
+            // 名字从 planView 取（单一真源）：本地名字数组会与路由表各自漂移。
+            const int next = (static_cast<int>(g_viewMode) + 1) % 4;
+            g_viewMode = static_cast<app::ViewMode>(next);
             // puts 自带换行，所以这里不需要转义序列（本会话里 "\\n" 被工具层吃成真实换行两次了）。
-            const std::string line = std::string("[view] ") + kNames[next];
+            const std::string line =
+                std::string("[view] ") + app::planView(g_viewMode, sr::texturedFS).name;
             std::puts(line.c_str());
         }
         if (input.toggleMip) {

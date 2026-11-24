@@ -116,4 +116,16 @@ bool blinnPhongPerPixelFS(const FragmentInput& in, const FragmentUniforms& u, Fr
     return true;
 }
 
+bool debugNormalFS(const FragmentInput& in, const FragmentUniforms&, FragmentOutput& out) {
+    // 插值法线短于 1（单位向量的加权平均是弦不是弧）⇒ 先 normalize（与
+    // blinnPhongPerPixelFS 同一理由）。零向量约定（vec.h）：退化法线 ⇒ 零向量
+    // ⇒ 中灰 (0.5,0.5,0.5)，不是黑也不是 NaN —— 中灰正是黑/NaN 会被误认成的颜色。
+    const Vec3 N = normalize(in.v.worldNormal);
+    // 线性 (N+1)*0.5：[-1,1] → [0,1]。**这里不编码** —— 颜色目标出口的 encodeSRGB
+    // 是单一编码点，法线视图因此被 gamma 编码（已知 wart，推导见头文件注释）。
+    // 不读 u 的任何字段：lights == nullptr 也要能工作（调试视图不依赖光照状态）。
+    out.color = LinearColor{(N.x + 1.0f) * 0.5f, (N.y + 1.0f) * 0.5f, (N.z + 1.0f) * 0.5f};
+    return true;
+}
+
 }  // namespace sr

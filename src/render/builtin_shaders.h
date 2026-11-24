@@ -62,4 +62,18 @@ bool lambertPerVertexFS(const FragmentInput& in, const FragmentUniforms& u, Frag
 // 行为由 test_lit_shaders.cpp 的 phong_* 与 textured_model_keeps_the_texture_under_phong 钉住。
 bool blinnPhongPerPixelFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
 
+// 法线调试视图（spec §7.3 的 debug_normal，M6.5/D23）：把插值后的世界法线映射成
+// 颜色 (N+1)*0.5。它是**普通 FS** 而不是 sink —— 读的是本像素插值出来的 worldNormal，
+// 只有 FS 拿得到；深度/灰度才需要整张缓冲、走帧末 sink（分界写在 sink.h 的
+// DebugViewSink 上方，两种机制并存是设计，别去"统一"它们）。
+// - 先 normalize：插值把单位向量缩短（弦短于弧，与 blinnPhongPerPixelFS 同一理由）。
+//   零向量约定（vec.h）：退化法线 ⇒ normalize 返回零 ⇒ 中灰 (0.5,0.5,0.5)，不是黑
+//   也不是 NaN —— 中灰正是黑/NaN 会被误认成的颜色，约定由测试钉住。
+// - 不读 u 的任何字段（lights == nullptr 也要能工作）：调试视图不许依赖光照状态。
+// - 已知 wart：输出是**线性** (N+1)/2，而颜色目标出口恒定做 encodeSRGB
+//   （render_backend.cpp），所以法线视图被 gamma 编码（线性 0.5 → 字节 188，不是 128）。
+//   这是输出侧单一编码点的结果，不是 bug；Texture::srgb = false 管的是**输入侧**
+//   要不要解码，两件事别混（M4 notes §3）。推导与测量钉在 test_view_mode.cpp。
+bool debugNormalFS(const FragmentInput& in, const FragmentUniforms& u, FragmentOutput& out);
+
 }  // namespace sr
