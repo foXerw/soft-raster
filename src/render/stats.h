@@ -28,6 +28,11 @@ struct FrameStats {
 
     int64_t interpClampedCount = 0;
 
+    // 分阶段耗时（M6.7/D21 起由 BackendA::drawRange 写入；此前是"声明了但没人写"的
+    // 休眠接口）。四段来自同一只秒表的相邻 lapMs()，**划分**一次 draw 的时间：
+    // sum(ms*) ≈ msTotal（略小：循环/尾巴开销未归段），stage_timers_partition_the_total
+    // 钉住这个关系。msTotal 只覆盖 drawRange；整帧时间（clear/HUD/sink）在 app 层另测。
+    // 每三角形至多 4 次读时钟，绝不逐像素（C5）；stats == nullptr 时一次都不读。
     double msVertex = 0;
     double msClip = 0;
     double msSetup = 0;

@@ -187,6 +187,9 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             if (!p.nextInt("--bench", v)) return false;
             if (v < 1) return p.fail("--bench 必须 >= 1，收到 " + std::to_string(v));
             out.bench = v;
+            // D21（M6.7）：bench N 就是跑 N 帧。此前只设 bench/offscreen 不设 frames ⇒
+            // --bench 60 实际只跑 1 帧，"我以为在测 60 帧"比没有测量更糟。
+            out.frames = v;
             out.offscreen = true;   // bench 是离屏测量入口，不需要再写 --offscreen
             continue;
         }

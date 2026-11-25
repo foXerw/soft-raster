@@ -122,8 +122,11 @@ std::string hudAscii(const std::string& utf8) {
 
 // 渲染一整帧。M5.6 起画面内容由 SceneState 决定：model == nullptr ⇒ 程序生成的
 // 立方体（M2–M4 的老画面，逐字节不变是这条分支的回归证据）；非空 ⇒ drawModel 逐组提交。
+// statsOut（M6.7/D21）：非空时把本帧的 FrameStats merge 出去 —— --bench 的分阶段表
+// 需要跨帧累加，而 stats 本来是 renderFrame 的局部量。窗口路径不传（默认 nullptr）。
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
-                 app::SceneState& scene, const app::AppOptions& opts) {
+                 app::SceneState& scene, const app::AppOptions& opts,
+                 sr::FrameStats* statsOut = nullptr) {
     target.depth.clear();
     // 背景从"全屏渐变填充"换成纯色 clear。
     // 渐变是 M0 的验收物（当时除了它没有别的东西可画），但它每帧要做 width*height 次
@@ -239,6 +242,7 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     const int line3Y = line2Y + sr::kGlyphHeightPx + 4;
     sr::drawText(target.color, 4, line3Y, hudAscii(app::shadeHudLine(opts, scene)),
                  sr::encodeSRGB({0.6f, 0.8f, 0.9f}), bg, 1);
+    if (statsOut != nullptr) statsOut->merge(stats);
 }
 
 int saveScreenshot(const sr::RenderTarget& target, const std::filesystem::path& path,
@@ -326,13 +330,15 @@ int runOffscreen(const app::AppOptions& o) {
     sr::Timer total;
     std::vector<double> frameMs;
     frameMs.reserve(static_cast<size_t>(o.frames));
+    sr::FrameStats benchStats;   // M6.7：跨帧累加的分阶段计时（--bench 的表用）
 
     for (int i = 0; i < o.frames; ++i) {
         sr::Timer frameTimer;
         const std::string status = "OFFSCREEN FRAME " + std::to_string(i + 1) + "/" +
                                    std::to_string(o.frames) + "  " + std::to_string(o.width) + "X" +
                                    std::to_string(o.height);
-        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, scene, o);
+        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, scene, o,
+                    o.bench > 0 ? &benchStats : nullptr);
         frameMs.push_back(frameTimer.elapsedMs());
     }
     const double ms = total.elapsedMs();
@@ -353,7 +359,18 @@ int runOffscreen(const app::AppOptions& o) {
                 o.width, o.height, o.frames, sum / static_cast<double>(frameMs.size()), best, worst,
                 ms);
     if (o.bench > 0) {
-        std::printf("[bench] 分阶段计时要到 M2 才有内容可测；现在只有整帧时间。\n");
+        // M6.7（D21）：M0 占位文案（"分阶段计时要到 M2 才有内容可测"）删除 —— 四个
+        // ms* 字段现在由 drawRange 写入。注意口径：这里的 total 是 **drawRange 时间**
+        // （四段划分它），上面 [offscreen] 行的平均是**整帧**时间（含 clear/HUD/sink）。
+        // 构建配置由上一行的 buildInfoString() 归因（性能数字必须能归因到具体构建）。
+        const double n = static_cast<double>(o.frames);
+        std::printf("[bench] ms/帧: VS %.3f  clip %.3f  setup %.3f  raster %.3f  total %.3f"
+                    "  |  三角形/帧 %.0f  着色片元/帧 %.0f  DC/帧 %.0f\n",
+                    benchStats.msVertex / n, benchStats.msClip / n, benchStats.msSetup / n,
+                    benchStats.msRaster / n, benchStats.msTotal / n,
+                    static_cast<double>(benchStats.trianglesSubmitted) / n,
+                    static_cast<double>(benchStats.fragmentsShaded) / n,
+                    static_cast<double>(benchStats.drawCalls) / n);
     }
     return 0;
 }

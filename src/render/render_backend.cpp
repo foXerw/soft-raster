@@ -39,6 +39,11 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
     const size_t end = begin + count;
 
     Timer total;
+    // D21（M6.7）：四个阶段共用一只秒表。lapMs() 读一次时钟并把它重启在当下 ⇒
+    // 每个三角形至多 4 次读时钟（C5：绝不逐像素），相邻 lap 首尾相接，求和 telescoping
+    // 成"最后一次 lap − 起点" ⇒ 四段**划分** drawRange 的时间（stage_timers_partition_the_total）。
+    // stats == nullptr 时一次时钟都不读：没人要统计时不为统计付费。
+    Timer stage;
     bump(stats, &FrameStats::trianglesSubmitted, static_cast<int64_t>(count / 3));
 
     // 一个已裁剪的三角形：VS 输出 → 投影 → Setup → 逐像素。
@@ -50,7 +55,11 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
 
         TriangleSetup setup;
         SetupResult res;
-        if (!setupTriangle(sv, target.color, state.cull, TileGrid{}, setup, res)) {
+        const bool accepted = setupTriangle(sv, target.color, state.cull, TileGrid{}, setup, res);
+        // setup 段到此结束 —— 被拒绝的三角形也消费了投影+setup 时间，同样要归段。
+        // 扇形重三角化会多次进入本 lambda ⇒ 累加（+=），不是覆盖。
+        if (stats != nullptr) stats->msSetup += stage.lapMs();
+        if (!accepted) {
             // 拒绝原因分开计数：offscreen 是正常事件，degenerate/nonfinite 是上游有问题的信号。
             // 把它们混成一个数会掩盖 bug（Task 2.4 的测试守住这条）。
             switch (res.reason) {
@@ -104,6 +113,9 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
             if (state.depthWrite) target.depth.write(x, y, ip.depth);
         });
         bump(stats, &FrameStats::trianglesRasterized);
+        // raster 段 = 逐像素循环（含深度/FS/写回）。lap 放在 lambda 末尾：
+        // 扇形重三角化的每个子三角形各归各的段。
+        if (stats != nullptr) stats->msRaster += stage.lapMs();
     };
 
     for (size_t i = begin; i + 2 < end; i += 3) {
@@ -118,10 +130,14 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
             in.color = idx < mesh.colors.size() ? mesh.colors[idx] : Vec4{1, 1, 1, 1};
             cv[k] = state.vertexShader != nullptr ? state.vertexShader(in, state.vu) : ClipVertex{};
         }
+        if (stats != nullptr) stats->msVertex += stage.lapMs();
 
         // ---- Clipping（六面）----
         ClipVertex clipped[kMaxClippedVerts];
         const int n = clipPolygonToFrustum(cv, clipped);
+        // clip 段在 continue 之前归段：被裁掉的三角形也消费了裁剪时间，
+        // 漏掉这一 lap 会把它的耗时错记进下一个三角形的 VS 段。
+        if (stats != nullptr) stats->msClip += stage.lapMs();
         if (n == 0) {
             bump(stats, &FrameStats::trianglesClippedOut);
             continue;

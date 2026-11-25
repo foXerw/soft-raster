@@ -1,6 +1,8 @@
 #include <cmath>
+#include <string>
 #include <vector>
 
+#include "app/cmdline.h"   // bench_flag 测试：cmdline.cpp 无 Win32（C4），被测试目标直接链接
 #include "harness.h"
 #include "math/transform.h"
 #include "render/builtin_shaders.h"
@@ -38,6 +40,16 @@ sr::PipelineState makeState(Canvas& c, sr::FrameStats& stats) {
     st.depthTest = false;
     st.depthWrite = false;
     return st;
+}
+
+// Ruling 84（防抖）：计时断言天然跨机器可变 —— 一次 160×90 的 draw 可能不到 1ms，
+// lapMs() 的分辨率与调度抖动会让比值毫无意义，那种测试会在负载高的机器上闪红，
+// 而闪红的测试教会人忽略红。所以先把 draw 重复到 msTotal ≥ 2.0ms 再判计时断言。
+// 100000 次是死循环保险丝（本机实测远不到 100 次就够）。stats 跨 draw 累加，
+// 与 merge() 的语义一致；depthTest/depthWrite 关着，重复 draw 不改变覆盖关系。
+void drawUntilMeasured(sr::BackendA& backend, const sr::Mesh& cube, sr::PipelineState& st,
+                       sr::FrameStats& stats) {
+    for (int i = 0; i < 100000 && stats.msTotal < 2.0; ++i) backend.draw(cube, st);
 }
 
 }  // namespace
@@ -195,4 +207,68 @@ SR_TEST(varying_reaches_the_fragment_shader_unchanged_for_flat_faces) {
                 ++seen;
             }
     SR_ASSERT(seen > 100);   // 正对姿态下 +Z 面应该盖住相当一片区域
+}
+
+// ---- M6.7（D21）：分阶段计时 -------------------------------------------------
+
+SR_TEST(stage_timers_are_written) {
+    // §8.1 #7：msVertex/msClip/msSetup/msRaster 在 M0–M6.6 是"声明了、merge() 也求和、
+    // 但没人写"的休眠接口（render_backend 只写 msTotal）。一次 draw 之后四个字段必须
+    // 全部 > 0。按 R84 重复到 msTotal ≥ 2.0ms 再判（单次 draw 的 lap 可能小于时钟分辨率）。
+    Canvas c{kW, kH};
+    sr::FrameStats stats;
+    const sr::Mesh cube = sr::makeCube(2.0f, true);
+    sr::BackendA backend;
+    auto st = makeState(c, stats);
+    st.vu = cubeUniforms(0.43f, 0.61f);
+    drawUntilMeasured(backend, cube, st, stats);
+    SR_ASSERT(stats.msTotal >= 2.0);   // R84 前提：时间不够时下面的断言没有意义
+    SR_ASSERT(stats.msVertex > 0.0);
+    SR_ASSERT(stats.msClip > 0.0);
+    SR_ASSERT(stats.msSetup > 0.0);
+    SR_ASSERT(stats.msRaster > 0.0);
+}
+
+SR_TEST(stage_timers_partition_the_total) {
+    // 本任务的牙齿：只断言 > 0 挡不住"四个字段都写同一个数"的糊弄写法（比如各写一份
+    // msTotal ⇒ 求和 = 4×msTotal）。求和与 msTotal 的关系才证明它们**划分**了工作：
+    // 四个 lap 来自同一只秒表（lapMs 读一次时钟并重启），求和 telescoping 成"最后一次
+    // lap 的时刻 − 起点"，必然 ≤ msTotal；下界 0.5 容忍机器抖动与未归段的循环开销。
+    // 实测比值（本机 Intel Core Ultra 9 275HX，2026-11-26，各 3 次运行）：
+    //   MSVC Debug 0.9996–0.9997；g++ (MSYS2 UCRT64, -O0) Debug 0.9996–0.9997；
+    //   MSVC /O2 Release 0.9994–0.9997。
+    // 四段份额（Debug MSVC）：VS ~2% / clip ~1.5% / setup ~3.5% / raster ~93%。
+    // 删掉任一段的写入 ⇒ 本条与 stage_timers_are_written 都红在"该段 > 0"（实测：
+    // 删 msRaster 时比值断言仍绿 —— 未 lap 的时间大多流进后续 lap，比值抓不到它）。
+    // 比值断言独有的牙齿是"四段写同一个数"（各写一份 msTotal ⇒ ratio≈4，而各段 > 0
+    // 全绿）这类糊弄，见 M6.7 报告的变异表。
+    Canvas c{kW, kH};
+    sr::FrameStats stats;
+    const sr::Mesh cube = sr::makeCube(2.0f, true);
+    sr::BackendA backend;
+    auto st = makeState(c, stats);
+    st.vu = cubeUniforms(0.43f, 0.61f);
+    drawUntilMeasured(backend, cube, st, stats);
+    SR_ASSERT(stats.msTotal >= 2.0);
+    SR_ASSERT(stats.msVertex > 0.0);
+    SR_ASSERT(stats.msClip > 0.0);
+    SR_ASSERT(stats.msSetup > 0.0);
+    SR_ASSERT(stats.msRaster > 0.0);
+    const double sum = stats.msVertex + stats.msClip + stats.msSetup + stats.msRaster;
+    const double ratio = sum / stats.msTotal;
+    SR_ASSERT(ratio >= 0.5);
+    SR_ASSERT(ratio <= 1.05);
+}
+
+SR_TEST(bench_flag_runs_the_requested_number_of_frames) {
+    // D21：--bench 60 曾经只设 bench/offscreen 而**不设 frames** ⇒ 实际只跑 1 帧，
+    // 终端还打印 M0 占位文案。"我以为在测 60 帧"比没有测量更糟。
+    const char* argv[] = {"soft-raster", "--bench", "60"};
+    app::AppOptions o;
+    std::string err;
+    const bool ok = app::parseCmdline(3, const_cast<char**>(argv), o, err);
+    SR_ASSERT(ok);
+    SR_ASSERT_EQ(o.bench, 60);
+    SR_ASSERT_EQ(o.frames, 60);   // 修复前这里是 1 ⇒ RED 在帧数
+    SR_ASSERT(o.offscreen);
 }
