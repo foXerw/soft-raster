@@ -14,6 +14,7 @@
 #include <string>
 
 #include "app/cmdline.h"      // AppOptions（buildLightRig / resetLights / shadeHudLine 的原始输入）
+#include "app/view_mode.h"    // ViewMode / planView（planFrame 组合着色与视图，M6.5 机制不动）
 #include "loader/model.h"
 #include "math/mat.h"
 #include "render/lights.h"    // LightRig / MaterialShade / litDefaultMaterialShade
@@ -39,6 +40,19 @@ ShadePlan planShade(ShadeMode mode);
 // 3 键循环：Phong → Gouraud → Unlit → Phong（从默认按一下就到 Gouraud，肉眼门要用）。
 ShadeMode cycleShadeMode(ShadeMode mode);
 ShadeMode parseShadeMode(const std::string& s);   // parseCmdline 已校验；未知 defensive 回 Phong
+
+// M6.6（控制器 (d)1）：把"着色模式"与"视图"组合成**一份**帧计划，VS 与 FS 成对从这里出。
+// 此前 renderFrame 从 shadePlan 取 VS、从 planView 取 FS —— "模式"在 app 层裂成两个旋钮。
+// planFrame 内部调 planShade + planView（M6.5 视图机制原样不动），提交点只消费这一份：
+// vertexShader 与 fragmentShader 永远来自同一个计划，不会各改各的。drawModel 的两个
+// override 接缝（vsOverride/fsOverride）也由这一份成对喂入。
+struct FramePlan {
+    sr::VertexShaderFn vertexShader;        // 着色模式的 VS
+    sr::FragmentShaderFn fragmentShader;    // 视图覆写后的 FS（无覆写 = 着色默认 FS）
+    sr::DebugViewSink::View sink;           // 帧末 sink（M6.5）
+    const char* viewName;                   // HUD 第二行 "VIEW %s"（视图名）
+};
+FramePlan planFrame(ShadeMode shade, ViewMode view);
 
 // 程序生成的兜底立方体（model == nullptr 时的 M2–M4 老画面）。进程内单例，与
 // goldenCheckerTexture 同一条纪律：窗口里看到的兜底模型与测试里断言的是同一个对象。
@@ -67,6 +81,10 @@ struct SceneState {
     // "调用方把同一个对象挂到两个阶段"从约定变成可测的不变式（M6.1 的 RecordingBackend
     // 只证明了 drawModel 拷贝一致，证明不了调用方）。
     sr::LightRig rig;
+    // R99：启动基线 = 由 AppOptions 构造出来的那个 rig（命令行给的值；没给才是内置默认）。
+    // 0 键与 R 重载都恢复**它**，不是内置默认 —— 用户 --key-intensity 2 是明确意图，
+    // 按 0 撤销的是自己的按键调整，不该把命令行抹掉。initSceneLighting 在载入时快照。
+    sr::LightRig baselineRig;
     // 程序几何（model == nullptr）的逐帧材质：litDefaultMaterialShade 的副本（D15）。
     // 导入模型由 drawModel 逐组覆写，不用这一份。
     sr::MaterialShade proceduralMat = sr::litDefaultMaterialShade();
@@ -95,8 +113,10 @@ struct SceneState {
     // 重置视角）。model == nullptr 或退化包围盒 ⇒ 不动作（六个字段一个都不碰）。
     void refit(int width, int height);
 
-    // 0 键：两盏灯强度 + 衰减开关恢复**内置默认**（AppOptions{} 的字段初值，单一真源）。
-    // 不是恢复 CLI 覆盖值 —— "0 = 回到出厂画面"语义确定、可预期（D24）。颜色/半径不动。
+    // 0 键（R99）：两盏灯强度 + 衰减开关恢复**启动基线** baselineRig（= 命令行构造的 rig）。
+    // 内置默认只在"命令行什么都没给"时作为基线出现，不再是任何按键的直接目标。
+    // 只恢复可按键步进的三个量（keyIntensity/pointIntensity/attenuate）；颜色/方向/半径/
+    // 视点相关项不动（eyeWorld/pointPosWorld 每帧由 prepareFrameUniforms 刷新）。
     void resetLights();
 };
 

@@ -6,14 +6,19 @@
 #include <string>
 
 #include "harness.h"
+#include "loader/obj_scene.h"     // renderObjGoldenScene（override 敏感性守卫）
 #include "math/transform.h"
 #include "math/vec.h"
 #include "render/builtin_shaders.h"
 #include "render/color.h"
 #include "render/render_backend.h"
 #include "scene/fit.h"
-#include "scene/golden_scene.h"   // goldenCheckerTexture（unlit 回归锚用的同一张单例贴图）
+#include "scene/golden_scene.h"   // goldenCheckerTexture + goldenModel/View/Projection/Sampler
 #include "test_util.h"            // Canvas
+
+#ifndef SR_SOURCE_DIR
+#define SR_SOURCE_DIR "."
+#endif
 
 // M5.6：SceneState 是"画什么 + 从哪看 + 出了什么错"的持有者。它不含 Win32
 // （cmdline.cpp 先例），所以能直接列进 tests 目标。这四条行为是 app 接线里唯一
@@ -437,15 +442,44 @@ SR_TEST(stepIntensity_reaches_zero_by_repeated_presses) {
 }
 
 SR_TEST(reset_key_restores_defaults) {
+    // R99：命令行什么都没给 ⇒ 启动基线 = 内置默认。0 恢复基线（此情形下即内置默认）。
     app::SceneState s;
+    const app::AppOptions d{};
+    s.baselineRig = app::buildLightRig(d, sr::BBox{}, s.camera);
     s.rig.keyIntensity = 2.5f;
     s.rig.pointIntensity = 0.0f;
     s.rig.attenuate = true;
     s.resetLights();
-    const app::AppOptions d{};   // 内置默认是唯一真源
-    SR_ASSERT_NEAR(s.rig.keyIntensity, d.keyIntensity, 1e-6f);
-    SR_ASSERT_NEAR(s.rig.pointIntensity, d.pointIntensity, 1e-6f);
+    SR_ASSERT_NEAR(s.rig.keyIntensity, d.keyIntensity, 1e-6f);   // 0.35
+    SR_ASSERT_NEAR(s.rig.pointIntensity, d.pointIntensity, 1e-6f);   // 0.4
     SR_ASSERT_FALSE(s.rig.attenuate);
+}
+
+SR_TEST(reset_key_restores_the_command_line_baseline) {
+    // R99 ①：--key-intensity 2 启动 ⇒ 按 0 仍是 2，**不是**内置 0.35。
+    // 用户命令行是明确意图；0 撤销的是按键调整，不该抹掉命令行（否则症状是"我的参数没生效"）。
+    app::AppOptions o;
+    o.keyIntensity = 2.0f;
+    app::SceneState s;
+    s.baselineRig = app::buildLightRig(o, sr::BBox{}, s.camera);
+    s.rig = s.baselineRig;
+    app::stepIntensity(s.rig.keyIntensity, -0.1f);   // 模拟按键调低 2 → 1.9
+    SR_ASSERT_NEAR(s.rig.keyIntensity, 1.9f, 1e-5f);
+    s.resetLights();
+    SR_ASSERT_NEAR(s.rig.keyIntensity, 2.0f, 1e-6f);   // 回到命令行值，不是 0.35
+}
+
+SR_TEST(reset_after_stepping_point_returns_to_command_line_value) {
+    // R99 ②：--point-intensity 2，按 [ 调低再按 0 ⇒ 回到 2 而不是内置 0.4。
+    app::AppOptions o;
+    o.pointIntensity = 2.0f;
+    app::SceneState s;
+    s.baselineRig = app::buildLightRig(o, sr::BBox{}, s.camera);
+    s.rig = s.baselineRig;
+    for (int i = 0; i < 5; ++i) app::stepIntensity(s.rig.pointIntensity, -0.1f);   // 2 → 1.5
+    SR_ASSERT_NEAR(s.rig.pointIntensity, 1.5f, 1e-5f);
+    s.resetLights();
+    SR_ASSERT_NEAR(s.rig.pointIntensity, 2.0f, 1e-6f);   // 回到命令行值，不是 0.4
 }
 
 SR_TEST(scene_hangs_one_rig_on_both_stages) {
@@ -485,6 +519,13 @@ SR_TEST(scene_hangs_one_rig_on_both_stages) {
 SR_TEST(default_rig_on_the_lit_sphere_does_not_saturate) {
     // D19 / §8.2 #7a 的前半：默认 rig 渲球，全图最大通道 < 255 **且**高光像素数 > 0。
     // 高光像素 = 比"关掉高光（Ks=0）"的同像素亮 > 0.01 线性 ⇒ 高光项真的可见，不靠魔法阈值。
+    //
+    // **这条测试是 pointIntensity 默认 0.4 的驱动约束，不是事后追认**（控制器 (a) 裁定）：
+    // 简报初稿 pointIntensity=1.0，但头灯几何下正对相机的球面点 N·L_point=1 ⇒ 漫反射 alone
+    // ≈1.0，再叠 Ks×pointInt 高光必撞 255 ⇒ 本条的 max<255 会红。D19 的规矩是"改默认、
+    // 不许改断言"，所以下调到 0.4（球峰值≈0.84 线性⇒~238 字节）。0.4 不是审美选择：
+    // 它是让本条绿的最大裕度值之一。app 立方体（checker 贴图）实测 max-channel **193**、
+    // **零个 255 字节**（1280x720 离屏，y>=48）—— 换贴图/albedo 后仍不饱和，留足余量。
     app::AppOptions o;   // 全默认
     sr::OrbitCamera cam;
     const sr::Mesh sphere = sr::makeUVSphere(1.0f, 24, 32);
@@ -616,6 +657,31 @@ SR_TEST(shade_mode_cycle_and_plan_route_the_three_shaders) {
     SR_ASSERT(std::string(p.name) == "PHONG");
 }
 
+SR_TEST(planFrame_pairs_vs_and_fs_from_one_plan) {
+    // (d)1：VS 与 FS 成对从一份计划出。着色模式给 VS+默认 FS，视图只覆写 FS。
+    const app::FramePlan pc = app::planFrame(app::ShadeMode::Phong, app::ViewMode::Color);
+    SR_ASSERT(pc.vertexShader == sr::transformVS);
+    SR_ASSERT(pc.fragmentShader == sr::blinnPhongPerPixelFS);
+    SR_ASSERT(pc.sink == sr::DebugViewSink::View::Color);
+    SR_ASSERT(std::string(pc.viewName) == "COLOR");
+    const app::FramePlan gc = app::planFrame(app::ShadeMode::Gouraud, app::ViewMode::Color);
+    SR_ASSERT(gc.vertexShader == sr::lambertVS);
+    SR_ASSERT(gc.fragmentShader == sr::lambertPerVertexFS);
+    const app::FramePlan uc = app::planFrame(app::ShadeMode::Unlit, app::ViewMode::Color);
+    SR_ASSERT(uc.vertexShader == sr::transformVS);
+    SR_ASSERT(uc.fragmentShader == sr::texturedFS);
+    // NORMAL 视图覆写 FS，但 VS 仍跟着色模式（Gouraud 的法线视图也要 lambertVS 填 worldNormal）。
+    const app::FramePlan gn = app::planFrame(app::ShadeMode::Gouraud, app::ViewMode::Normal);
+    SR_ASSERT(gn.vertexShader == sr::lambertVS);
+    SR_ASSERT(gn.fragmentShader == sr::debugNormalFS);
+    SR_ASSERT(gn.sink == sr::DebugViewSink::View::Color);   // 法线视图恒等 sink（D23）
+    SR_ASSERT(std::string(gn.viewName) == "NORMAL");
+    // DEPTH 视图：FS 原样（着色默认），sink 改 Depth。
+    const app::FramePlan pd = app::planFrame(app::ShadeMode::Phong, app::ViewMode::Depth);
+    SR_ASSERT(pd.fragmentShader == sr::blinnPhongPerPixelFS);
+    SR_ASSERT(pd.sink == sr::DebugViewSink::View::Depth);
+}
+
 SR_TEST(nm_degenerate_flag_reaches_the_hud) {
     // P98：setNormalMatrix 的 bool 被消费进 normalMatrixDegenerate，HUD 据此显示。
     app::SceneState s;
@@ -664,4 +730,58 @@ SR_TEST(unlit_mode_reproduces_the_unlit_picture) {
     renderContent(neu, app::fallbackCube(), sp.vertexShader, sp.fragmentShader, vuNew, fuNew, sn);
     SR_ASSERT(so.fragmentsWritten > 100);
     SR_ASSERT(old.colorMem == neu.colorMem);   // 逐字节相同
+}
+
+SR_TEST(obj_golden_nullptr_overrides_are_load_bearing_for_the_m4_anchor) {
+    // (d)2：锚 3"OBJ golden 与 M4 逐字节相同"依赖 drawModel 调用点**不传** override。
+    // 证两件事：① 生产 renderObjGoldenScene 的像素 == 同姿态 nullptr drawModel（调用点确实
+    // 是 nullptr 语义）；② 故意给非空 FS override ⇒ 像素不同（override 会静默破坏锚 3）。
+    // 于是未来谁给 obj/golden 调用点塞 override，锚 3 会红 —— 这条守卫说明那条等式不是空的。
+    sr::LoadedModel m;
+    std::string err;
+    const bool ok = sr::loadModel(std::string(SR_SOURCE_DIR "/assets/obj/cube.obj"), m, err);
+    SR_ASSERT(ok);
+    if (!ok) {
+        std::printf("[obj-override] 载入失败: %s\n", err.c_str());
+        return;
+    }
+
+    // 生产路径（内部 drawModel 不传 override，画了背景与标题条）。
+    Canvas prod{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::FrameStats sp;
+    sr::renderObjGoldenScene(m, prod.rt, &sp);
+
+    // 同姿态（obj_scene 用的同一组导出函数）+ 同背景，nullptr override 的 drawModel。
+    sr::VertexUniforms vu;
+    vu.model = sr::goldenModel();
+    vu.view = sr::goldenView();
+    vu.proj = sr::goldenProjection(sr::kGoldenWidth, sr::kGoldenHeight);
+    sr::setNormalMatrix(vu, vu.model, "");
+    sr::FragmentUniforms base;
+    base.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    base.sampler = sr::goldenSampler();
+    sr::BackendA backend;
+    Canvas null{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::goldenBackground(null.rt.color);
+    sr::FrameStats sn;
+    sr::drawModel(backend, m, null.rt, vu, base, &sn);   // nullptr overrides
+
+    // 非空 FS override（法线视图）的同姿态 drawModel。
+    Canvas over{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::goldenBackground(over.rt.color);
+    sr::FrameStats so;
+    sr::drawModel(backend, m, over.rt, vu, base, &so, sr::debugNormalFS);
+
+    // 跳过 HUD 矩形（x<110,y<12，与锚 3 同）：生产画了标题条，drawModel 没画。
+    int diffNull = 0, diffOver = 0;
+    for (int y = 0; y < sr::kGoldenHeight; ++y) {
+        for (int x = 0; x < sr::kGoldenWidth; ++x) {
+            if (x < 110 && y < 12) continue;
+            const uint32_t p = prod.rt.color.readPacked(x, y);
+            if (p != null.rt.color.readPacked(x, y)) ++diffNull;
+            if (p != over.rt.color.readPacked(x, y)) ++diffOver;
+        }
+    }
+    SR_ASSERT_EQ(diffNull, 0);   // 生产 == nullptr ⇒ 调用点确实不传 override
+    SR_ASSERT(diffOver > 0);     // 非空 override 改变画面 ⇒ 锚 3 对 override 敏感（不是空等式）
 }

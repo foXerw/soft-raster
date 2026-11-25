@@ -167,10 +167,19 @@ ShadeMode parseShadeMode(const std::string& s) {
 }
 
 void SceneState::resetLights() {
-    const AppOptions d{};   // 内置默认是唯一真源（不是 CLI 覆盖值）
-    rig.keyIntensity = d.keyIntensity;
-    rig.pointIntensity = d.pointIntensity;
-    rig.attenuate = d.attenuate;
+    // R99：恢复启动基线（命令行构造的 rig），不是内置默认。--key-intensity 2 启动后按 0
+    // 仍是 2 —— 撤销的是按键调整，不是命令行意图。只动可步进的三个量。
+    rig.keyIntensity = baselineRig.keyIntensity;
+    rig.pointIntensity = baselineRig.pointIntensity;
+    rig.attenuate = baselineRig.attenuate;
+}
+
+FramePlan planFrame(ShadeMode shade, ViewMode view) {
+    // 组合着色与视图成**一份**计划（(d)1）：VS 取着色模式，FS 取 planView（视图覆写或
+    // 着色默认）。M6.5 的 planView 原样调用，不改其机制。提交点只消费这一份 ⇒ VS/FS 成对。
+    const ShadePlan sp = planShade(shade);
+    const ViewPlan vp = planView(view, sp.fragmentShader);
+    return {sp.vertexShader, vp.fragmentShader, vp.sink, vp.name};
 }
 
 void prepareFrameUniforms(SceneState& scene, int width, int height,

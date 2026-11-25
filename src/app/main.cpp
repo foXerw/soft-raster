@@ -148,11 +148,10 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     sr::FragmentUniforms fu;
     app::prepareFrameUniforms(scene, target.color.width, target.color.height, vu, fu);
 
-    // M6.6：着色模式 → 默认 VS/FS（planShade，P101 默认 FS 只此一份）。
-    const app::ShadePlan shadePlan = app::planShade(scene.shade);
-    // M6.5（D23）：视图 → "FS 覆写 + 帧末 sink"。把着色模式的默认 FS 喂给 planView 当
-    // defaultFS：视图不覆写时原样透传 ⇒ 提交点直接用 plan.fragmentShader，不再三元值重述。
-    const app::ViewPlan plan = app::planView(g_viewMode, shadePlan.fragmentShader);
+    // M6.6（(d)1）：着色模式 + 视图组合成**一份**帧计划，VS 与 FS 成对从这里出。
+    // planFrame 内部调 planShade + planView（M6.5 机制不动）；提交点只消费这一份，
+    // 不再"VS 从 shadePlan、FS 从 planView"两处分别决定（P101：默认 FS 只在 planShade 写一份）。
+    const app::FramePlan plan = app::planFrame(scene.shade, g_viewMode);
 
     if (scene.model == nullptr) {
         // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——
@@ -160,8 +159,8 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // （fallbackCube 单例）：renderFrame 只负责画，不持有场景内容。
         sr::PipelineState st;
         st.target = &target;
-        // M6.6：VS 跟着色模式（unlit/phong=transformVS，gouraud=lambertVS）。
-        st.vertexShader = shadePlan.vertexShader;
+        // M6.6：VS 跟着色模式（unlit/phong=transformVS，gouraud=lambertVS），与 FS 同一份计划。
+        st.vertexShader = plan.vertexShader;
         // M4 的可见成果：贴一张程序生成的 checker。顶点色仍保留 —— Gouraud 的 lambertVS
         // 消费它（albedo = 顶点色 × Kd，D17）；W 键看背面时"哪面哪个颜色"也仍读得出。
         // P101：plan.fragmentShader 已是"视图覆写或着色默认 FS"，不再三元值重述 planView。
@@ -199,7 +198,7 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // VS（Gouraud=lambertVS，逐组读 mat->diffuse）。unlit 时 plan.fragmentShader=texturedFS
         // ⇒ 与旧的 nullptr 语义逐字节相同。NORMAL 视图仍覆写 FS（画面与标签不许撒谎）。
         sr::drawModel(backend, *scene.model, target, vu, base, &stats,
-                      plan.fragmentShader, shadePlan.vertexShader);
+                      plan.fragmentShader, plan.vertexShader);
     }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
@@ -225,11 +224,11 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
     } else {
         char line2[256];
         const int unrecognized = scene.model ? scene.model->stats.unrecognized : 0;
-        // M6.5：第二行显示 plan.name（当前视图）—— 切到 NORMAL 时画面是法线色，
+        // M6.5：第二行显示 plan.viewName（当前视图）—— 切到 NORMAL 时画面是法线色，
         // 标签必须同步说出来（"该看到什么必须 always 在画面上"）。
         std::snprintf(line2, sizeof(line2),
                       "VIEW %s  %s  DC %lld  UNRECOGNIZED %d  P=PAUSE S=SHOT V=VIEW 1=MIP 2=FILT R=RELOAD F=FIT ESC=QUIT",
-                      plan.name, hudAscii(scene.modelLabel).c_str(),
+                      plan.viewName, hudAscii(scene.modelLabel).c_str(),
                       static_cast<long long>(stats.drawCalls), unrecognized);
         sr::drawText(target.color, 4, line2Y, line2,
                      sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
@@ -300,6 +299,8 @@ void initSceneLighting(app::SceneState& scene, const app::AppOptions& o) {
         scene.model ? scene.model->model.mesh.bounds : app::fallbackCube().bounds;
     scene.rig = app::buildLightRig(o, bounds, scene.camera);
     scene.pointPosFromCmdline = o.pointPosGiven;
+    // R99：快照启动基线。0 键与 R 重载都恢复它（命令行意图），不是内置默认。
+    scene.baselineRig = scene.rig;
 }
 
 int runOffscreen(const app::AppOptions& o) {

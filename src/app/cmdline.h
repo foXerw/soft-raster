@@ -58,7 +58,12 @@ struct AppOptions {
     // 正对相机的球面点 N·L=1 ⇒ 漫反射 alone ≈1.0 再叠高光必撞 255。按 D19"改默认不改断言"
     // 下调到 0.4（峰值 ≈0.84 线性 ⇒ ~238 字节，留余量；推导见 test_scene 与本报告）。
     float pointIntensity = 0.4f;        // --point-intensity
-    float ambientIntensity = 1.0f;      // --ambient：环境光强度（线性乘子，乘到解码后的环境色）
+    // --ambient 是**强度标量**（线性乘子），不是颜色；--ambient-color 才是颜色（sRGB）。
+    // 乘法链写死（D9，控制器 (b) 裁定）：
+    //   rig.ambient = decodeLightColor(ambientColor) × ambientIntensity   （buildLightRig）
+    //   最终环境项 = rig.ambient × MaterialShade.ambient(Ka)              （shading.h）
+    // 即"环境光颜色 × 环境光强度 × 材质 Ka"。强度默认 1.0 ⇒ 不给 --ambient 时环境项 = Ka × 解码色。
+    float ambientIntensity = 1.0f;      // --ambient
     float ambientColor[3] = {1.0f, 1.0f, 1.0f};   // --ambient-color（sRGB）
     bool attenuate = false;             // --attenuate / A 键（D7 默认关）
     // --attenuate-radius：<0 = 哨兵"用默认 = bounds.radius()*3"（空盒 ⇒1.0，Ruling 49）。

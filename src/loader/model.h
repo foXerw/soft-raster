@@ -114,6 +114,9 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
 // transformVS，vsOverride 非空时用它覆写（M6.6：Gouraud 模式要 lambertVS 逐组读 mat->diffuse）；
 // fragmentShader 默认 texturedFS，fsOverride 非空时用它覆写（M6.5/D23：app 的视图计划 planView
 // 要把法线视图这类"普通 FS 视图"接进导入模型路径）。两个 nullptr = 既有语义，现有调用点一个都不改。
+// **两个 override 应由同一份着色计划成对喂入**（app::planFrame，控制器 (d)1）：VS 与 FS 是一个
+// "模式"的两半，不许在 app 里两处分别决定。golden/obj 场景调用点**刻意不传** override（nullptr）——
+// 锚 3"与 M4 逐字节相同"依赖这一点，非空 override 会静默破坏它（test_scene 有敏感性守卫）。
 // stats 透传给 drawRange（drawCalls 按组累加）。
 //
 // 入口先守 textures 生命周期不变式（见 LoadedModel 注释）：违反 ⇒ 打印消息 + 拒绝绘制。
