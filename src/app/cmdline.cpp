@@ -206,6 +206,20 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             for (int c = 0; c < 3; ++c) {
                 if (!p.nextFloat(a.c_str(), dst[c])) return false;
             }
+            // R103（P103，R100 同形）：颜色三元组是 sRGB 域，分量必须在 [0,1]。
+            // 此前越界/NaN 在解析时合法，buildLightRig 的 srgbToLinear 把它们**静默改写**
+            //（夹取 + NaN→0）：--key-color 2 0 0 变成 1 0 0。命令行是明确表达的意图，
+            // 不许被下游悄悄改掉 ⇒ 在边界拒绝，消息点名 flag 与允许范围。
+            // `!(v >= 0 && v <= 1)` 对 NaN 天然为真（NaN 的任何比较都 false）。
+            // --key-dir / --point-pos 是方向/坐标，不是颜色 ⇒ 不受这条约束。
+            if (a == "--key-color" || a == "--point-color" || a == "--ambient-color") {
+                for (int c = 0; c < 3; ++c) {
+                    if (!(dst[c] >= 0.0f && dst[c] <= 1.0f)) {
+                        return p.fail(std::string(a) + " 的分量必须在 [0, 1] 之间（sRGB），收到 " +
+                                      std::to_string(dst[c]));
+                    }
+                }
+            }
             if (a == "--point-pos") out.pointPosGiven = true;
             continue;
         }

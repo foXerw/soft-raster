@@ -497,6 +497,56 @@ SR_TEST(cmdline_light_defaults_match_d19_and_attenuate_radius_sentinel) {
     }
 }
 
+SR_TEST(cmdline_light_colors_reject_out_of_range_and_nan_at_parse) {
+    // R103（P103 骑手，R100 同形）：--key-color 2 0 0 曾在解析时合法，buildLightRig 的
+    // srgbToLinear 把它**静默改写**成 1 0 0（夹取 + NaN→0）—— 命令行是明确表达的意图，
+    // 不许被下游悄悄改掉。三个颜色 flag 的分量必须在解析时就落在 [0,1]（sRGB 域），
+    // NaN 同样拒绝（`!(v>=0 && v<=1)` 对 NaN 天然为真）。错误消息点名 flag 与允许范围。
+    bool ok = false;
+    std::string err;
+    {
+        Args a{{"--key-color", "2", "0", "0"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--key-color") != std::string::npos);
+        SR_ASSERT(err.find("[0, 1]") != std::string::npos);   // 允许范围要在消息里
+    }
+    {
+        Args a{{"--point-color", "0", "-0.1", "0"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--point-color") != std::string::npos);
+        SR_ASSERT(err.find("[0, 1]") != std::string::npos);
+    }
+    {
+        // NaN：strtof 接受 "nan"，srgbToLinear 会把它映射成 0 —— 必须在边界拒绝。
+        Args a{{"--ambient-color", "nan", "0", "0"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--ambient-color") != std::string::npos);
+        SR_ASSERT(err.find("[0, 1]") != std::string::npos);
+    }
+    {
+        // 边界 0 与 1 本身合法（闭区间）；三个 flag 都走同一条检查。
+        Args a{{"--key-color", "0", "1", "0.5", "--point-color", "1", "0", "1",
+                "--ambient-color", "0.5", "0.5", "0.5"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_NEAR(o.keyColor[0], 0.0f, 1e-6f);
+        SR_ASSERT_NEAR(o.keyColor[1], 1.0f, 1e-6f);
+        SR_ASSERT_NEAR(o.pointColor[2], 1.0f, 1e-6f);
+    }
+    {
+        // --key-dir / --point-pos 是方向/坐标，**不是**颜色 ⇒ 不受 [0,1] 约束
+        //（这条边界区分是故意的：R103 的界限来自 sRGB 域，不是审美上限）。
+        Args a{{"--key-dir", "-2", "0", "0", "--point-pos", "9", "8", "7"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_NEAR(o.keyDir[0], -2.0f, 1e-6f);
+        SR_ASSERT_NEAR(o.pointPos[0], 9.0f, 1e-6f);
+    }
+}
+
 SR_TEST(cmdline_steppable_intensities_reject_above_three_at_parse) {
     // R100（P103）：--key-intensity 5 曾在解析时合法，第一次按 = 才被夹到 3 ——
     // 命令行是明确表达的意图，不许被静默改写（与 R99 同构）。>3 必须在**解析时**拒绝，
