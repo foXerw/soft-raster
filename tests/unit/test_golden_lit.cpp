@@ -530,10 +530,10 @@ SR_TEST(the_per_pixel_highlight_center_moves_with_the_eye) {
             if (d0.rt.color.readPacked(x, y) != d1.rt.color.readPacked(x, y)) ++diffuseDiff;
     SR_ASSERT_EQ(diffuseDiff, 0);
 
-    // 只改 keyDir ⇒ 漫反射重心移动（光向相关）。key 瓣高光峰虽然也随 keyDir 动，
-    // 但"高光重心随 keyDir"的可测部分在这里是漫反射：key 瓣面积小（同 Ns 但
-    // 强度低 14%），且本断言要分离的是"光向相关"这一事实本身。两个方向是
-    // **不同的合法值**（Ruling 67：{-0.3,-0.8,-0.6} → {-0.8,-0.3,-0.6}）。
+    // 只改 keyDir ⇒ **高光重心也移动**（简报原话），漫反射重心 likewise（光向相关）。
+    // key 瓣峰 Ks·keyInt=0.1225 与点瓣同量级 ⇒ keyDir 转动时 key 瓣整体搬家，
+    // 高光重心实测移 8.35px（比漫反射的 4.41px 还大）。两个方向是**不同的合法值**
+    //（Ruling 67：{-0.3,-0.8,-0.6} → {-0.8,-0.3,-0.6}）。
     sr::LightRig rigKey = rig0;
     rigKey.keyDirWorld = sr::normalize(sr::Vec3{-0.8f, -0.3f, -0.6f});
     Canvas d2{kW, kH};
@@ -541,6 +541,19 @@ SR_TEST(the_per_pixel_highlight_center_moves_with_the_eye) {
     renderFixture(d2, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, rigKey, noSpec, s7);
     const sr::Vec2 dc0 = diffuseCentroid(d0);
     const sr::Vec2 dc2 = diffuseCentroid(d2);
+    // 高光重心随 keyDir（点瓣不动 —— 点光/眼都没变；动的是 key 瓣）。
+    Canvas kf{kW, kH}, kb{kW, kH};
+    sr::FrameStats sk1, sk2;
+    renderFixture(kf, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, rigKey, mat, sk1);
+    renderFixture(kb, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, rigKey, noSpec, sk2);
+    const SpecMap specK(kf, kb);
+    const sr::Vec2 kc = specK.centroid();
+    const float specKeyMoved = std::fabs(kc.x - c0.x) + std::fabs(kc.y - c0.y);
+    std::printf("[lit7c] keyDir 改变后高光重心 (%.2f,%.2f)，位移 %.2fpx\n",
+                static_cast<double>(kc.x), static_cast<double>(kc.y),
+                static_cast<double>(specKeyMoved));
+    // 下限 1px：实测 8.35px；1px 是量化抖动（<0.1px）的 10 倍。
+    SR_ASSERT(specKeyMoved > 1.0f);
     const float dMoved = std::fabs(dc2.x - dc0.x) + std::fabs(dc2.y - dc0.y);
     std::printf("[lit7c] 漫反射重心 (%.2f,%.2f) → (%.2f,%.2f)，keyDir 改变位移 %.2fpx\n",
                 static_cast<double>(dc0.x), static_cast<double>(dc0.y),
