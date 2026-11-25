@@ -40,9 +40,15 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
 
     Timer total;
     // D21（M6.7）：四个阶段共用一只秒表。lapMs() 读一次时钟并把它重启在当下 ⇒
-    // 每个三角形至多 4 次读时钟（C5：绝不逐像素），相邻 lap 首尾相接，求和 telescoping
-    // 成"最后一次 lap − 起点" ⇒ 四段**划分** drawRange 的时间（stage_timers_partition_the_total）。
-    // stats == nullptr 时一次时钟都不读：没人要统计时不为统计付费。
+    // 相邻 lap 首尾相接，求和 telescoping 成"最后一次 lap − 起点" ⇒ 四段**划分**
+    // drawRange 的时间（stage_timers_partition_the_total）。绝不逐像素（C5）。
+    // 读时钟次数（P107 修正，原话"每个三角形至多 4 次"只对未裁剪的三角形成立）：
+    // 未裁剪 = 恰好 4 次 lap（VS/clip/setup/raster）；裁剪成 n 顶点的多边形 =
+    // 2 + (n−2) 次 setup lap + 每个**被接受**子三角形一次 raster lap，
+    // n ≤ kMaxClippedVerts = 9 ⇒ 每个输入三角形至多 2 + 2×7 = 16 次。
+    // stats == nullptr（P106 修正，原话"一次时钟都不读"是假的）：所有 lap 都被守卫
+    // 不再读时钟，但 `Timer total/stage` 的构造各**无条件**读一次（timer.h:17）⇒
+    // 每次 draw call 固定 2 次读。被守卫的是 lap，不是构造。
     Timer stage;
     bump(stats, &FrameStats::trianglesSubmitted, static_cast<int64_t>(count / 3));
 

@@ -567,7 +567,7 @@ SR_TEST(bench_flag_runs_the_requested_number_of_frames)   // 今天 --bench 60 �
 
 一个 `Timer stage;` 在三角形循环外；循环内按 `VS → clip → (rasterOne 内) project+setup → pixel loop`
 四个边界各 `stats->msXxx += stage.lapMs()`。
-**每三角形至多 4 次读时钟，绝不逐像素**（C5）。
+**绝不逐像素读时钟**（C5）。（M6.8/P107 修正：原文"每三角形至多 4 次"只对未裁剪三角形成立；裁剪成 n 顶点的多边形是 2+(n−2) 次 setup lap + 每个被接受子三角形一次 raster lap，n≤9 ⇒ 至多 16 次。）
 `rasterOne` 是 lambda，lap 要放在它内部的两段之间（`sv/setupTriangle` 与 `forEachCoveredPixel`）。
 扇形重三角化会让 setup/raster 段被多次进入 ⇒ 累加，不是覆盖。
 

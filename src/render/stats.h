@@ -32,7 +32,10 @@ struct FrameStats {
     // 休眠接口）。四段来自同一只秒表的相邻 lapMs()，**划分**一次 draw 的时间：
     // sum(ms*) ≈ msTotal（略小：循环/尾巴开销未归段），stage_timers_partition_the_total
     // 钉住这个关系。msTotal 只覆盖 drawRange；整帧时间（clear/HUD/sink）在 app 层另测。
-    // 每三角形至多 4 次读时钟，绝不逐像素（C5）；stats == nullptr 时一次都不读。
+    // 绝不逐像素（C5）。读时钟次数（P107）：未裁剪三角形 4 次 lap；裁剪成 n 顶点的
+    // 多边形 2+(n−2) 次 setup lap + 每个被接受子三角形一次 raster lap（n≤9 ⇒ 至多 16）。
+    // stats == nullptr（P106）：lap 一次都不读，但两只 Timer 的构造仍无条件各读一次
+    //（timer.h）—— 每次 draw call 固定 2 次，不是 0 次。
     double msVertex = 0;
     double msClip = 0;
     double msSetup = 0;
