@@ -732,6 +732,41 @@ SR_TEST(unlit_mode_reproduces_the_unlit_picture) {
     SR_ASSERT(old.colorMem == neu.colorMem);   // 逐字节相同
 }
 
+SR_TEST(app_default_shading_is_phong_and_selects_blinn_phong_per_pixel_fs) {
+    // P105（M6.6 复审遗留）：app 的默认画面从 unlit 换成了 phong，但没有任何 committed
+    // 测试钉住这个**app 层默认**——改回 unlit 不会红任何一条（planShade 的路由表测试
+    // 只判"给 Phong 时路由对"，不判"默认就是 Phong"）。这里在可测层钉整条默认链：
+    // AppOptions.shade 字符串 → parseCmdline 无参 → parseShadeMode → SceneState.shade
+    // → planShade/planFrame 选出的 FS。Win32 那一半不测（C4），但默认值的全部决定点
+    // 都在这个 TU 可达的层里。
+    app::AppOptions o;
+    SR_ASSERT(o.shade == "phong");                       // 字段默认（cmdline.h）
+    // 无参解析不改默认（argv 形状与 test_cmdline 的 Args 同形，这里只有一根程序名）。
+    char prog[] = "soft-raster";
+    char* argv[] = {prog};
+    std::string err;
+    app::AppOptions parsed;
+    const bool ok = app::parseCmdline(1, argv, parsed, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT(parsed.shade == "phong");
+    app::SceneState s;
+    SR_ASSERT(s.shade == app::ShadeMode::Phong);         // SceneState 字段默认（scene.h）
+    SR_ASSERT(app::parseShadeMode(o.shade) == app::ShadeMode::Phong);
+    // 默认 FS 是 blinnPhongPerPixelFS（不是 texturedFS/unlit，也不是 lambertPerVertexFS）。
+    const app::ShadePlan sp = app::planShade(s.shade);
+    SR_ASSERT(sp.fragmentShader == sr::blinnPhongPerPixelFS);
+    SR_ASSERT(sp.vertexShader == sr::transformVS);
+    const app::FramePlan fp = app::planFrame(s.shade, app::ViewMode::Color);
+    SR_ASSERT(fp.fragmentShader == sr::blinnPhongPerPixelFS);
+    // prepareFrameUniforms 不碰 shade（它只组装 uniforms）——默认链经过它之后仍是 Phong。
+    sr::VertexUniforms vu;
+    sr::FragmentUniforms fu;
+    app::prepareFrameUniforms(s, 128, 128, vu, fu);
+    SR_ASSERT(s.shade == app::ShadeMode::Phong);
+    SR_ASSERT(app::planShade(s.shade).fragmentShader == sr::blinnPhongPerPixelFS);
+}
+
 SR_TEST(obj_golden_nullptr_overrides_are_load_bearing_for_the_m4_anchor) {
     // (d)2：锚 3"OBJ golden 与 M4 逐字节相同"依赖 drawModel 调用点**不传** override。
     // 证两件事：① 生产 renderObjGoldenScene 的像素 == 同姿态 nullptr drawModel（调用点确实
