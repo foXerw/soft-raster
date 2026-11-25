@@ -769,8 +769,9 @@ SR_TEST(app_default_shading_is_phong_and_selects_blinn_phong_per_pixel_fs) {
 
 SR_TEST(obj_golden_nullptr_overrides_are_load_bearing_for_the_m4_anchor) {
     // (d)2：锚 3"OBJ golden 与 M4 逐字节相同"依赖 drawModel 调用点**不传** override。
-    // 证两件事：① 生产 renderObjGoldenScene 的像素 == 同姿态 nullptr drawModel（调用点确实
-    // 是 nullptr 语义）；② 故意给非空 FS override ⇒ 像素不同（override 会静默破坏锚 3）。
+    // 证三件事：① 生产 renderObjGoldenScene 的像素 == 同姿态 nullptr drawModel（调用点确实
+    // 是 nullptr 语义）；② 故意给非空 FS override ⇒ 像素不同（override 会静默破坏锚 3）；
+    // ③（P104）VS override 同样可观察 —— 但必须先排除空转情形（见下半段注释）。
     // 于是未来谁给 obj/golden 调用点塞 override，锚 3 会红 —— 这条守卫说明那条等式不是空的。
     sr::LoadedModel m;
     std::string err;
@@ -819,4 +820,58 @@ SR_TEST(obj_golden_nullptr_overrides_are_load_bearing_for_the_m4_anchor) {
     }
     SR_ASSERT_EQ(diffNull, 0);   // 生产 == nullptr ⇒ 调用点确实不传 override
     SR_ASSERT(diffOver > 0);     // 非空 override 改变画面 ⇒ 锚 3 对 override 敏感（不是空等式）
+
+    // ---- P104（M6.6 复审遗留）：VS override 也必须可观察，不只 FS ----
+    // 上面的守卫只演示了 fsOverride。vsOverride 的敏感性有一个真实的空转陷阱：
+    // cube.obj 无顶点色（render_backend 兜底白），且 lights == nullptr 时 lambertVS
+    // 早退成 transformVS —— 此时换 VS **一个像素都不变**，"VS override 生效"是空断言。
+    // 所以这里把 FS 固定为 lambertPerVertexFS（直读 v.color，VS 写什么它显示什么），
+    // 再分三步：
+    //   ① vsOverride=nullptr（transformVS）⇒ v.color=白 ⇒ 白立方体；
+    //   ② vsOverride=lambertVS 但 lights=nullptr ⇒ 早退 ⇒ 与 ① 逐像素相同（空转情形，
+    //      精确说出来而不是假装 VS override 天然可观察）；
+    //   ③ vsOverride=lambertVS 且挂上 rig ⇒ 顶点算完整光照（cube.mtl Ks=0 ⇒ 只有漫反射，
+    //      各面 N·L 不同）⇒ 与 ① 不同 ⇒ VS override 真的改变了画面。
+    sr::LightRig vsRig;
+    vsRig.keyDirWorld = sr::normalize(sr::Vec3{-0.3f, -0.8f, -0.6f});
+    vsRig.keyColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    vsRig.keyIntensity = 0.35f;
+    vsRig.pointColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    vsRig.pointIntensity = 0.4f;
+    vsRig.eyeWorld = sr::Vec3{0.0f, 0.0f, sr::kGoldenCamZ};
+    vsRig.pointPosWorld = vsRig.eyeWorld;
+    vsRig.ambient = sr::LinearColor{1.0f, 1.0f, 1.0f};
+
+    Canvas vsBase{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::goldenBackground(vsBase.rt.color);
+    sr::FrameStats svb;
+    sr::drawModel(backend, m, vsBase.rt, vu, base, &svb, sr::lambertPerVertexFS);   // VS=nullptr
+
+    Canvas vsVacuous{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::goldenBackground(vsVacuous.rt.color);
+    sr::FrameStats svv;
+    sr::drawModel(backend, m, vsVacuous.rt, vu, base, &svv, sr::lambertPerVertexFS, sr::lambertVS);
+
+    sr::VertexUniforms vuLit = vu;
+    vuLit.lights = &vsRig;
+    sr::FragmentUniforms baseLit = base;
+    baseLit.lights = &vsRig;   // 两个阶段同一份 rig（Ruling 97 同形）
+    Canvas vsOver{sr::kGoldenWidth, sr::kGoldenHeight};
+    sr::goldenBackground(vsOver.rt.color);
+    sr::FrameStats svo;
+    sr::drawModel(backend, m, vsOver.rt, vuLit, baseLit, &svo, sr::lambertPerVertexFS, sr::lambertVS);
+
+    int diffVacuous = 0, diffVs = 0;
+    for (int y = 0; y < sr::kGoldenHeight; ++y) {
+        for (int x = 0; x < sr::kGoldenWidth; ++x) {
+            if (x < 110 && y < 12) continue;   // 只跳过标题条（drawModel 不画它）
+            const uint32_t p = vsBase.rt.color.readPacked(x, y);
+            if (p != vsVacuous.rt.color.readPacked(x, y)) ++diffVacuous;
+            if (p != vsOver.rt.color.readPacked(x, y)) ++diffVs;
+        }
+    }
+    SR_ASSERT_EQ(diffVacuous, 0);   // 无 rig 时 lambertVS ≡ transformVS（空转情形成立）
+    SR_ASSERT(diffVs > 0);          // 挂上 rig 后 VS override 可观察 ⇒ 守卫对 VS 也有牙齿
+    std::printf("[obj-override] VS override：无 rig 差 %d 像素（空转），挂 rig 差 %d 像素\n",
+                diffVacuous, diffVs);
 }
