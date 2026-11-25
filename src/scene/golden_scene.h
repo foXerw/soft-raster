@@ -1,6 +1,7 @@
 #pragma once
 
 #include "math/mat.h"
+#include "render/lights.h"
 #include "render/render_target.h"
 #include "render/sampler.h"
 #include "render/stats.h"
@@ -50,6 +51,33 @@ void renderGoldenScene(RenderTarget& target, FrameStats* stats);
 // **它是一个新函数，不是 renderGoldenScene 的改动**：后者被 main.cpp 与
 // `assets/golden/m3_cube.bmp` 用着，把纹理塞进去会让 M3 的回归锚点当场失效。
 void renderGoldenSceneTextured(RenderTarget& target, FrameStats* stats);
+
+// ---- M6.8：lit golden（设计 §8.2/§10）--------------------------------------
+// 无贴图球的夹具常量。**slices 必须是奇数**（§8.2 夹具约束第 2 条）：顶点经度
+// θ_j = 2πj/slices，正对相机/点光的 +z 方向在 θ=π/2，j = slices/4 只有在 slices
+// 被 4 整除时才是整数 ⇒ 奇数 slices 保证没有顶点正对眼，Gouraud 的高光峰不会恰好
+// 落在顶点上，"摊开 vs 收紧"（#7b）才不退化成空转对照。15/4 = 3.75 ⇒ 最近的顶点
+// 经度差 0.25 格 = 6°。密度是**实测选出来的**（M6.8）：24/31 的细网格上三角形
+//（7.5°×11.6°）比 Ns=64 的高光带（±8.4°）还小，Gouraud 的"摊开"与逐像素的带几乎
+// 同宽（实测半高宽 10 vs 10），#7b 退化成空转；12/15 的三角形（15°×24°）显著大于
+// 高光带，摊开才可见（实测见 test_golden_lit 的注释）。golden 的作用是抓数值回归，
+// 不是展示画质（本文件开头）——轮廓略多边形化是有意取舍。
+inline constexpr int kGoldenLitStacks = 12;
+inline constexpr int kGoldenLitSlices = 15;   // 奇数（见上）
+
+// lit golden 的 rig：函数内 static const，**进程内单例**（C5；M4"窗口与 golden
+// 共用同一张贴图"的原则对 rig 同样适用）。vu.lights/fu.lights 与量化断言的夹具
+// 都指向这一个对象 —— 参考图与断言夹具不可能各自漂。值 = D19 的 app 默认
+//（AppOptions 的 keyIntensity 0.35 / pointIntensity 0.4 / keyDir {-0.3,-0.8,-0.6}），
+// eye/point 在 golden 姿态的眼 (0,0,kGoldenCamZ)。core 不能 include app/cmdline.h
+//（分层），所以这份镜像由测试 golden_lit_rig_matches_the_app_default_rig 钉住不漂。
+const LightRig& goldenLitRig();
+
+// M6.8 的参考场景：同一个固定姿态（D15：不用 fit 相机），但画无贴图球 +
+// blinnPhongPerPixelFS + litDefaultMaterialShade()。**新函数，不改既有两个**：
+// M3/M4 的参考图与回归锚点原样保留。签名与它们相同（void(*)(RenderTarget&,
+// FrameStats*)）⇒ writeGolden 不需要 std::function 加宽。
+void renderGoldenSceneLit(RenderTarget& target, FrameStats* stats);
 
 // 背景与采样状态（M5.7 收紧 5：从 golden_scene.cpp 的文件内 static 提出来）。
 // OBJ golden 场景（src/loader/obj_scene.cpp）必须**复用这两个函数**而不是再写一份：

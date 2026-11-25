@@ -638,6 +638,12 @@ int main(int argc, char** argv) {
                                sr::renderObjGoldenScene(model, t, s);
                            });
     }
+    if (!o.goldenWriteLit.empty()) {
+        // M6.8：与 M3/M4 入口同形 —— 裸函数指针即可（签名相同，无 LoadedModel 要携带）。
+        // 参考图由生产函数 renderGoldenSceneLit 生成（Ruling 39），互斥已在 parseCmdline 拒绝。
+        return writeGolden("m6_lit_sphere", app::nativePath(o.goldenWriteLit),
+                           sr::renderGoldenSceneLit);
+    }
     if (o.offscreen) return runOffscreen(o);
     return runWindow(o);
 }

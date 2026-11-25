@@ -35,6 +35,10 @@ struct AppOptions {
     // （缺 --obj ⇒ 明确报错，没有默认场景），输出只是给人看的图 —— 锚 3 的比对在
     // 进程内对着既有 M4 参考图做，**不新增参考图**（收紧 2）。
     std::string goldenWriteObj;
+    // M6.8 的 lit golden 同样是**自己的入口**（Ruling 38）：无默认场景选择，
+    // 与另外三个 golden 入口及 --emit-checker-tga 互斥（5 选 1）。参考图由
+    // sr::renderGoldenSceneLit 生成（Ruling 39：与测试渲染的是同一个生产函数）。
+    std::string goldenWriteLit;
     // M5 的 checker.tga 资产同样是**自己的入口**（Ruling 38 的理由原样适用）：
     // 不带默认值、不与任何场景/格式选择器合并。它不渲染，只把 makeCheckerImage
     // 的字节写成 TGA（锚 2 的 provenance 入口，设计 §10）。

@@ -21,6 +21,7 @@ namespace {
 #endif
 constexpr char kRefM3[] = SR_SOURCE_DIR "/assets/golden/m3_cube.bmp";
 constexpr char kRefM4[] = SR_SOURCE_DIR "/assets/golden/m4_textured_cube.bmp";
+constexpr char kRefM6Lit[] = SR_SOURCE_DIR "/assets/golden/m6_lit_sphere.bmp";
 constexpr int kTolerancePerChannel = 1;   // ±1/255/通道（设计文档 C1′ 的具体化）
 
 struct Buffers {
@@ -95,6 +96,21 @@ SR_TEST(golden_m3_cube_matches_reference) {
 #else
     compareWithReference(kRefM3, "soft-raster --golden-write assets/golden/m3_cube.bmp",
                          &sr::renderGoldenScene);
+#endif
+}
+
+SR_TEST(golden_m6_lit_sphere_matches_reference) {
+#ifndef _MSC_VER
+    // C1′：lit golden 的比对含逐像素 pow，只在 MSVC 主路径判定。
+    std::printf("[skip] golden 只在 MSVC 判定（当前不是 MSVC）\n");
+    return;
+#else
+    // M6.8：与**自己的**参考图比对，两边含同一条 21 字符标签条 ⇒ **没有排除矩形**
+    //（compareWithReference 本来就不跳过任何像素；M5 锚 3 的 x<110,y<12 属于
+    // "OBJ 场景 vs M4 参考"那条跨场景等式，抄到这里会静默忽略标签条上的真实差异）。
+    compareWithReference(kRefM6Lit,
+                         "soft-raster --golden-write-lit assets/golden/m6_lit_sphere.bmp",
+                         &sr::renderGoldenSceneLit);
 #endif
 }
 

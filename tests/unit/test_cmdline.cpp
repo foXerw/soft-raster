@@ -367,6 +367,58 @@ SR_TEST(cmdline_rejects_emit_checker_tga_together_with_golden_write_obj) {
     SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
 }
 
+// ---- M6.8：lit golden 入口（Ruling 38 的第五个实例）--------------------------
+
+SR_TEST(cmdline_golden_write_lit_is_a_separate_entry) {
+    // lit golden 有自己的显式入口，不带默认场景选择（Ruling 38）：与另外四个
+    // golden/emit 入口互不越界。合并入口的真实代价是"重新生成基准图后一切正常"。
+    Args a{{"--golden-write-lit", "assets/golden/m6_lit_sphere.bmp"}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT(o.goldenWriteLit == "assets/golden/m6_lit_sphere.bmp");
+    SR_ASSERT(o.goldenWrite.empty());           // 没有被顺手填上
+    SR_ASSERT(o.goldenWriteTextured.empty());
+    SR_ASSERT(o.goldenWriteObj.empty());
+    SR_ASSERT(o.emitCheckerTga.empty());
+    SR_ASSERT(o.offscreen);                     // 写 golden 不需要窗口
+    SR_ASSERT_EQ(o.frames, 1);
+}
+
+SR_TEST(cmdline_golden_write_lit_requires_a_value) {
+    Args a{{"--golden-write-lit"}};
+    bool ok = false;
+    std::string err;
+    parse(a, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("--golden-write-lit") != std::string::npos);
+    SR_ASSERT(err.find("缺少值") != std::string::npos);
+}
+
+SR_TEST(cmdline_rejects_golden_write_lit_together_with_every_other_entry) {
+    // 5 选 1（M5.3/M5.7 的既有写法扩成五个）：lit 与另外四个入口两两同给都必须拒绝，
+    // 两个顺序都拒绝（否则"先写谁"又变成参数顺序的事）。main 里先匹配的分支先返回，
+    // 同时给两个入口会被静默忽略 —— "我以为两张都刷新了"没有别的信号。
+    bool ok = false;
+    std::string err;
+    const char* others[] = {"--golden-write", "--golden-write-textured", "--golden-write-obj",
+                            "--emit-checker-tga"};
+    for (const char* other : others) {
+        Args a{{"--golden-write-lit", "a.bmp", other, "b.bmp"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("golden") != std::string::npos ||
+                  err.find("emit-checker-tga") != std::string::npos);
+        Args b{{other, "b.bmp", "--golden-write-lit", "a.bmp"}};
+        parse(b, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("golden") != std::string::npos ||
+                  err.find("emit-checker-tga") != std::string::npos);
+    }
+}
+
 // ---- M6.6：光照 flag（G-M6.4 / D24 命令行清单）------------------------------
 
 SR_TEST(cmdline_accepts_the_light_flags) {
