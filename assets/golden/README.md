@@ -7,6 +7,7 @@
 |---|---|---|
 | `m3_cube.bmp` | `sr::renderGoldenScene`：320×180、Backend A 单线程、位置编码顶点色的立方体 + HUD 文字 | `soft-raster --golden-write assets/golden/m3_cube.bmp` |
 | `m4_textured_cube.bmp` | `sr::renderGoldenSceneTextured`：**同一个立方体、同一套姿态**，但走 `texturedFS` + 程序生成的 4×4 checker（128×128、三线性 + mip、ClampEdge）+ HUD 文字 | `soft-raster --golden-write-textured assets/golden/m4_textured_cube.bmp` |
+| `m6_lit_sphere.bmp` | `sr::renderGoldenSceneLit`：**同一套固定姿态**（D15，不用 fit），无贴图 UV 球（半径 1、12 stacks / **15 slices 奇数** ⇒ 无顶点正对眼）+ `blinnPhongPerPixelFS` + `litDefaultMaterialShade()` + D19 默认 rig（`goldenLitRig()` 单例）+ HUD 文字 `"GOLDEN M6 LIT 320X180"`（21 字符） | `soft-raster --golden-write-lit assets/golden/m6_lit_sphere.bmp` |
 
 两张图共用姿态常量（`golden_scene.h` 的 `kGoldenModelRotX/Y`、`kGoldenCamZ`、`kGoldenCubeSize`），
 所以 M4 那张相对 M3 的差别只有"面上画的是什么"和标题里的一个字。
@@ -29,12 +30,31 @@ ctest 对两张图都用 ±1/255/通道判，但**额外的要求不同**：
   拿 md5 当 M3 的门禁会误判自己的重构。**是否重生成 M3 参考图留给产品方**（验证纪律 #4 要求先肉眼验收），
   本里程碑不自行处理。
 
+## m6_lit_sphere.bmp 的 provenance（M6.8）
+
+- **生成于提交 `ad7ae06`**（feat(scene): lit golden …（M6.8），branch `feat/m6-lighting`），
+  由 `sr::renderGoldenSceneLit` 经 `--golden-write-lit` 写出（Ruling 39：参考图与测试
+  渲染的是**同一个生产函数**）。构建：soft-raster 0.0.1 Debug MSVC。
+- **生成在产品方肉眼验收之后**：M6.6 Step 7 的人眼门于 2026-11-26 通过（"都没问题"），
+  纪律 #4 不再阻塞本图。M3/M4 参考图**未重生成**，逐字节原样。
+- sha256：`47fc4462a070a5d6b158a7b91c8734a7769b3c87a3908f31f1e472992d897054`。
+  可复现性：同一构建连续生成两次逐字节相同（cmp 通过）。
+- 门禁：ctest ±1/255/通道（MSVC-only，g++ 打印 `[skip]`，C1′）。**没有排除矩形**：
+  本图与自己的参考图比对，两边含同一条标签条；M5 锚 3 的 `x<110,y<12` 属于
+  "OBJ 场景 vs M4 参考"那条跨场景等式，抄到这里会静默忽略标签条上的真实差异
+  （标签墨迹到 x=127 > 110）。
+- 配套守卫（`tests/unit/test_golden_lit.cpp`）：确定性、**不饱和**（表面区最大通道
+  <255 且高光像素 >0，D19 —— 坏重生成必红某条）、非 M3/M4 帧（拿错参考图不可能
+  静默通过）、三条量化断言（#7b 半高宽/面积、#7c 峰位随眼、#8 边 kink）。
+  地板级破坏性验证 #13（法线矩阵改 identity ⇒ 比对红 2985 像素）见 M6.8 报告。
+
 ## 重新生成
 
 ```bash
 cmake --build build --config Debug
 ./build/Debug/soft-raster.exe --golden-write assets/golden/m3_cube.bmp
 ./build/Debug/soft-raster.exe --golden-write-textured assets/golden/m4_textured_cube.bmp
+./build/Debug/soft-raster.exe --golden-write-lit assets/golden/m6_lit_sphere.bmp
 ```
 
 然后**肉眼看一次**再提交：错位的 golden 会把之后每个里程碑都锁死。
