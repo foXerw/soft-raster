@@ -70,7 +70,8 @@ struct InputState {
     bool cycleFilter = false;
 
     // M6.6：着色模式与光参数按键（D24）。`3` 循环着色模式；`[`/`]` 点光强度 ∓/±0.1；
-    // `-`/`=` 方向光强度 ∓/±0.1；`A` 衰减开关；`0` 恢复默认。加法步进 ⇒ 0 可达。
+    // `-`/`=` 方向光强度 ∓/±0.1；`A` 衰减开关；`0` 恢复启动参数（R99：命令行构造的
+    // 基线，不是内置默认）。加法步进 ⇒ 0 可达。
     bool cycleShade = false;
     bool toggleAttenuate = false;
     bool resetLights = false;

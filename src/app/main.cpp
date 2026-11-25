@@ -277,7 +277,9 @@ int writeGolden(const std::string& label, const std::filesystem::path& path,
 // --obj / R / 拖放共用的载入入口（M5.6）。失败 ⇒ 打印 + HUD 错误行，旧画面（首载时
 // 是兜底立方体）原样保留，**程序继续跑** —— 不是退出：看不见模型比看见错误更糟。
 // 成功 ⇒ 打印计数，按 fitEnabled 自动 refit（--no-fit 时不自动；F 键仍可手动）。
-void loadObjIntoScene(app::SceneState& scene, const std::filesystem::path& objPath, int width,
+// 返回成败（P103）：R/拖放路径凭它决定是否重新应用 CLI 光照 —— 失败的载入没有换模型，
+// 不许把用户按键步进过的光强/切过的着色模式抹回命令行值。
+bool loadObjIntoScene(app::SceneState& scene, const std::filesystem::path& objPath, int width,
                       int height) {
     if (scene.load(objPath)) {
         const sr::LoadedModel& m = *scene.model;
@@ -285,14 +287,16 @@ void loadObjIntoScene(app::SceneState& scene, const std::filesystem::path& objPa
                     sr::lex::displayPath(objPath).c_str(), m.stats.triangles,
                     m.model.groups.size(), m.textures.size());
         if (scene.fitEnabled) scene.refit(width, height);
-    } else {
-        std::printf("[obj] 载入失败: %s\n", scene.errorLine.c_str());
+        return true;
     }
+    std::printf("[obj] 载入失败: %s\n", scene.errorLine.c_str());
+    return false;
 }
 
-// M6.6：从命令行组装场景光照（着色模式 + rig）。在 startup 与每次载入后调用 ——
-// 载入换了模型 ⇒ 包围盒变了 ⇒ 衰减半径默认（半径×3）要跟着新尺度重算。载入即重新应用
-// CLI 光参数（一次"出厂光照"），按键步进的活值在两次载入之间保持。
+// M6.6：从命令行组装场景光照（着色模式 + rig）。在 startup 与每次**成功**载入后调用
+// （P103：失败的载入没有换模型，不得复位光/模式）—— 载入换了模型 ⇒ 包围盒变了 ⇒
+// 衰减半径默认（半径×3）要跟着新尺度重算。成功载入即重新应用 CLI 光参数（一次"出厂
+// 光照"），按键步进的活值在两次载入之间保持。
 void initSceneLighting(app::SceneState& scene, const app::AppOptions& o) {
     scene.shade = app::parseShadeMode(o.shade);
     const sr::BBox& bounds =
@@ -368,7 +372,7 @@ int runWindow(const app::AppOptions& o) {
     std::printf("[window] P=暂停 O=单步 S=截图 V=视图 Esc=退出\n");
     std::printf("[window] 1=开关 mip（关掉后斜面和远处会闪） 2=采样模式 nearest/bilinear/trilinear\n");
     std::printf("[window] R=重载模型 F=重新 fit（不动视角） 拖放 .obj 进窗口即可载入\n");
-    std::printf("[window] 3=着色模式(unlit/gouraud/phong) [/]=点光强度 -/==方向光强度 A=衰减 0=恢复默认\n");
+    std::printf("[window] 3=着色模式(unlit/gouraud/phong) [/]=点光强度 -/==方向光强度 A=衰减 0=恢复启动参数\n");
 
     sr::RenderTarget& target = surface->target();
     sr::Timer clock;
@@ -438,9 +442,13 @@ int runWindow(const app::AppOptions& o) {
         }
         if (input.resetLights) {
             scene.resetLights();
-            std::printf("[lights] 恢复默认（key %.2f / point %.2f / 衰减关）\n",
+            // R101（P103）：R99 之后恢复的是**启动基线**（命令行构造的 rig），不是内置
+            // 默认；衰减状态打印**实际值** —— --attenuate 启动时按 0 恢复的是"开"，
+            // 硬编码"衰减关"会与画面/HUD 矛盾（标签不许撒谎）。
+            std::printf("[lights] 恢复启动参数（key %.2f / point %.2f / 衰减%s）\n",
                         static_cast<double>(scene.rig.keyIntensity),
-                        static_cast<double>(scene.rig.pointIntensity));
+                        static_cast<double>(scene.rig.pointIntensity),
+                        scene.rig.attenuate ? "开" : "关");
         }
         // 加法步进 ±0.1，夹 [0,3] ⇒ 0 可达（"只留一盏灯"真能按出来，D24）。
         if (input.stepPointUp) app::stepIntensity(scene.rig.pointIntensity, 0.1f);
@@ -453,17 +461,22 @@ int runWindow(const app::AppOptions& o) {
         // R = 重载同一个 path（失败保留旧模型，错误行持续到下次成功）。
         // 从未请求过模型（无 --obj 无拖放）时无事可做。
         if (input.reloadModel && !scene.requested.empty()) {
-            loadObjIntoScene(scene, scene.requested, target.color.width, target.color.height);
-            initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
+            // P103：只有成功载入才重新应用 CLI 光照。失败时旧模型保留（A1），用户
+            // 步进过的光强与切过的着色模式同样保留 —— 失败不该有副作用。
+            if (loadObjIntoScene(scene, scene.requested, target.color.width, target.color.height)) {
+                initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
+            }
         }
         // 拖放（M5.6）：shell 给的路径已在 win32_window.cpp 转成 UTF-8，这里经
         // nativePath 走与 --obj 完全相同的入口（后缀守卫在 SceneState::load，A4）。
         // 凭 dropEvent 而非 droppedObj 非空（终审 M3）：转换失败时 droppedObj 为空，
         // 但事件发生过 —— 仍走 load，空路径拿到自己的错误消息，不静默忽略（A4）。
         if (input.dropEvent) {
-            loadObjIntoScene(scene, app::nativePath(input.droppedObj), target.color.width,
-                             target.color.height);
-            initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
+            // P103：与 R 重载同一条门 —— 失败的拖放不得复位光/模式。
+            if (loadObjIntoScene(scene, app::nativePath(input.droppedObj), target.color.width,
+                                 target.color.height)) {
+                initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
+            }
         }
         if (input.screenshot) {
             ++screenshotCounter;

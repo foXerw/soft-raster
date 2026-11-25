@@ -496,3 +496,42 @@ SR_TEST(cmdline_light_defaults_match_d19_and_attenuate_radius_sentinel) {
         SR_ASSERT(err.find("--attenuate-radius") != std::string::npos);
     }
 }
+
+SR_TEST(cmdline_steppable_intensities_reject_above_three_at_parse) {
+    // R100（P103）：--key-intensity 5 曾在解析时合法，第一次按 = 才被夹到 3 ——
+    // 命令行是明确表达的意图，不许被静默改写（与 R99 同构）。>3 必须在**解析时**拒绝，
+    // 错误消息点名 flag 与允许范围。按键步进的运行时夹钳 [0,3] 保留（那是另一个边界）。
+    bool ok = false;
+    std::string err;
+    {
+        Args a{{"--key-intensity", "5"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--key-intensity") != std::string::npos);
+        SR_ASSERT(err.find("3") != std::string::npos);   // 允许范围要在消息里
+    }
+    {
+        // 点光强度走同一个 [0,3] 按键夹钳（[/] 键），同一条理由适用。
+        Args a{{"--point-intensity", "5"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--point-intensity") != std::string::npos);
+        SR_ASSERT(err.find("3") != std::string::npos);
+    }
+    {
+        // 边界 3 本身合法（夹钳区间是闭区间）。
+        Args a{{"--key-intensity", "3", "--point-intensity", "3"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_NEAR(o.keyIntensity, 3.0f, 1e-6f);
+        SR_ASSERT_NEAR(o.pointIntensity, 3.0f, 1e-6f);
+    }
+    {
+        // --ambient 没有按键步进 ⇒ 没有 [0,3] 夹钳 ⇒ 5 是合法的线性乘子。
+        // 这条边界区分是故意的：R100 的界限来自"运行时会被夹"，不是审美上限。
+        Args a{{"--ambient", "5"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_NEAR(o.ambientIntensity, 5.0f, 1e-6f);
+    }
+}

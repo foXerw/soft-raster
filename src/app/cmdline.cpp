@@ -210,6 +210,13 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             float v = 0.0f;
             if (!p.nextFloat(a.c_str(), v)) return false;
             if (!(v >= 0.0f)) return p.fail(std::string(a) + " 不能为负，收到 " + std::to_string(v));
+            // R100（P103）：两个可按键步进的强度在**解析时**拒绝 >3。运行时夹钳 [0,3]
+            // 是按键步进的边界，不是静默改写命令行的理由（与 R99 同构：命令行是明确
+            // 表达的意图）。--ambient 没有按键步进 ⇒ 不设这个上限。
+            if ((a == "--key-intensity" || a == "--point-intensity") && v > 3.0f) {
+                return p.fail(std::string(a) + " 必须在 [0, 3] 之间（按键步进的夹钳范围），收到 " +
+                              std::to_string(v));
+            }
             if (a == "--key-intensity") out.keyIntensity = v;
             else if (a == "--point-intensity") out.pointIntensity = v;
             else out.ambientIntensity = v;
@@ -309,10 +316,10 @@ std::string usageString() {
            "  --shade <mode>     着色模式 unlit|gouraud|phong，默认 phong（3 键运行时循环）\n"
            "  --key-color <r g b>      方向光颜色（sRGB 0..1），默认 1 1 1\n"
            "  --key-dir <x y z>        方向光\"照向\"的方向（世界空间，自动归一化）\n"
-           "  --key-intensity <f>      方向光强度（线性乘子），默认 0.35（-/= 键 ±0.1）\n"
+           "  --key-intensity <f>      方向光强度（线性乘子），默认 0.35，范围 [0,3]（-/= 键 ±0.1）\n"
            "  --point-color <r g b>    点光颜色（sRGB 0..1），默认 1 1 1\n"
            "  --point-pos <x y z>      点光世界坐标；不给则跟随相机 eye（[/] 键调强度）\n"
-           "  --point-intensity <f>    点光强度（线性乘子），默认 0.4\n"
+           "  --point-intensity <f>    点光强度（线性乘子），默认 0.4，范围 [0,3]（[/] 键 ±0.1）\n"
            "  --ambient <f>            环境光强度（线性乘子），默认 1.0\n"
            "  --ambient-color <r g b>  环境光颜色（sRGB 0..1），默认 1 1 1\n"
            "  --attenuate              打开点光距离衰减（A 键切换；默认关）\n"
