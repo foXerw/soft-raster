@@ -1,7 +1,10 @@
 // M6.8：lit golden 的量化断言（设计 §8.2 #7a/#7b/#7c/#8）与参考图守卫。
 //
 // C1′：凡涉及逐像素 pow 的断言只在 MSVC 主路径判定，g++ 侧打印可见 [skip]。
-// 唯一例外是 rig 漂移守卫（纯数据比较，无 pow）——两侧都跑。
+// 唯一例外是 rig 漂移守卫——两侧都跑。它 g++ 安全的原因不是"没有 pow"
+//（decodeLightColor 走 srgbToLinear 的 pow(1.0,2.4)，makeUVSphere 有 sin/cos），
+// 而是**没有逐位相等要求**：全部 NEAR 1e-6 容差比较，跨编译器三角函数/pow 的
+// 末位差远小于容差。
 //
 // 夹具 = Step 1 的生产夹具本身：makeUVSphere(1, kGoldenLitStacks, kGoldenLitSlices)
 //（slices 奇数 ⇒ 无顶点正对眼，§8.2 约束 2）+ goldenModel/View/Projection（D15 固定
@@ -12,6 +15,7 @@
 // 逐字节相同 ⇒ 差值在球外恒 0，重心/半高宽天然只统计球面，不需要掩码或排除矩形。
 // 8-bit 量化半步长 ≤ 0.00446 线性（推导见 test_lit_shaders 的 textured_model_keeps_
 // the_texture_under_phong），下面所有容差都从它出发。
+#include <algorithm>   // std::sort（edgeCrossings 的去重；不靠传递包含侥幸）
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -58,7 +62,7 @@ sr::Vec2 pixelOf(const sr::Vec3& world) {
 
 #endif  // _MSC_VER
 
-// ---- rig 漂移守卫（无 pow，两侧都跑）-----------------------------------------
+// ---- rig 漂移守卫（无逐像素 pow、容差比较，两侧都跑）--------------------------
 
 SR_TEST(golden_lit_rig_matches_the_app_default_rig_at_the_golden_eye) {
     // goldenLitRig() 是 D19 app 默认在 core 层的镜像（core 不能 include app/cmdline.h）。
@@ -77,8 +81,12 @@ SR_TEST(golden_lit_rig_matches_the_app_default_rig_at_the_golden_eye) {
     SR_ASSERT_NEAR(got.keyDirWorld.y, want.keyDirWorld.y, 1e-6f);
     SR_ASSERT_NEAR(got.keyDirWorld.z, want.keyDirWorld.z, 1e-6f);
     SR_ASSERT_NEAR(got.keyColor.r, want.keyColor.r, 1e-6f);
+    SR_ASSERT_NEAR(got.keyColor.g, want.keyColor.g, 1e-6f);
+    SR_ASSERT_NEAR(got.keyColor.b, want.keyColor.b, 1e-6f);
     SR_ASSERT_NEAR(got.keyIntensity, want.keyIntensity, 1e-6f);
     SR_ASSERT_NEAR(got.pointColor.r, want.pointColor.r, 1e-6f);
+    SR_ASSERT_NEAR(got.pointColor.g, want.pointColor.g, 1e-6f);
+    SR_ASSERT_NEAR(got.pointColor.b, want.pointColor.b, 1e-6f);
     SR_ASSERT_NEAR(got.pointIntensity, want.pointIntensity, 1e-6f);
     SR_ASSERT_NEAR(got.pointPosWorld.x, want.pointPosWorld.x, 1e-6f);
     SR_ASSERT_NEAR(got.pointPosWorld.y, want.pointPosWorld.y, 1e-6f);
@@ -571,23 +579,18 @@ SR_TEST(interpolation_kink_at_triangle_edges_is_stronger_under_gouraud) {
     // kink 相对局部斜率"与逐像素图。**不叫 Mach band**：那是感知的过冲（侧抑制），
     // 是图要说明的东西；二阶差分能测的是一阶导的不连续（notes 用图说明感知部分）。
     // 逐像素 Blinn-Phong 的法线在球面网格上也只是 C0 ⇒ 两边都有 kink，断言只比强弱。
-    // 度量喂的是**高光-only**行（full − Ks=0）：漫反射底在两种图里都光滑弯曲，
-    // 会稀释比值；高光带才是"顶点凸组合 vs 逐像素重算"差别最大的地方。
+    // 度量喂的是**全帧亮度**行（pf/gf 解码到线性，见下面 LP/LG 的填法）。
     const sr::Mesh sphere = sr::makeUVSphere(1.0f, sr::kGoldenLitStacks, sr::kGoldenLitSlices);
     const sr::MaterialShade mat = sr::litDefaultMaterialShade();
-    sr::MaterialShade noSpec = mat;
-    noSpec.specular = sr::LinearColor{0.0f, 0.0f, 0.0f};
     const sr::LightRig& rig = sr::goldenLitRig();
-    Canvas pf{kW, kH}, pb{kW, kH}, gf{kW, kH}, gb{kW, kH};
-    sr::FrameStats s1, s2, s3, s4;
+    Canvas pf{kW, kH}, gf{kW, kH};
+    sr::FrameStats s1, s3;
     renderFixture(pf, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, rig, mat, s1);
-    renderFixture(pb, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, rig, noSpec, s2);
     renderFixture(gf, sphere, sr::lambertVS, sr::lambertPerVertexFS, rig, mat, s3);
-    renderFixture(gb, sphere, sr::lambertVS, sr::lambertPerVertexFS, rig, noSpec, s4);
     // 指定扫描线 = Phong **全帧**最亮行（key 瓣峰所在，y≈75）：那里 Gouraud 的
-    // 顶点摊开最显著。度量用全帧亮度而不是高光-only：spec 相减把量化噪声翻倍
-    //（两张量化帧之差），淹没 Gouraud 内部的"仿射 ⇒ 二阶差分≈0"信号（实测
-    // spec-only 比值 1.05 vs 0.76，分不开；全帧 3.6 vs 2.1）。
+    // 顶点摊开最显著。**不用高光-only（full − Ks=0）**：两张量化帧相减把量化噪声
+    // 翻倍，淹没 Gouraud 内部的"仿射 ⇒ 二阶差分≈0"信号 —— 开发期实测分不开，
+    // 故弃用（最终全帧度量的实测值在下面阈值推导注释里，可复现）。
     int y0 = kH / 2;
     float best = -1.0f;
     for (int y = 0; y < kH; ++y) {
