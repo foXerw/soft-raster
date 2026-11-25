@@ -110,14 +110,15 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
 // MaterialShade（循环外复用同一块存储），vu.mat 与 fu.mat 指向同一份（单一真源）；
 // shininess 原样直传（含 0），夹取归 shading.h（M6.2）。lights 指针从调用方的
 // vu/base 原样透传（nullptr = unlit），drawModel 不发明光照模式。
-// base.sampler 原样保留（调用方决定 ClampEdge/Trilinear 等）。vertexShader 用内置的
-// transformVS；fragmentShader 默认 texturedFS，fsOverride 非空时用它覆写（M6.5/D23：
-// app 的视图计划 planView 要把法线视图这类"普通 FS 视图"接进导入模型路径；nullptr =
-// 既有语义，现有调用点一个都不改）。stats 透传给 drawRange（drawCalls 按组累加）。
+// base.sampler 原样保留（调用方决定 ClampEdge/Trilinear 等）。vertexShader 默认内置的
+// transformVS，vsOverride 非空时用它覆写（M6.6：Gouraud 模式要 lambertVS 逐组读 mat->diffuse）；
+// fragmentShader 默认 texturedFS，fsOverride 非空时用它覆写（M6.5/D23：app 的视图计划 planView
+// 要把法线视图这类"普通 FS 视图"接进导入模型路径）。两个 nullptr = 既有语义，现有调用点一个都不改。
+// stats 透传给 drawRange（drawCalls 按组累加）。
 //
 // 入口先守 textures 生命周期不变式（见 LoadedModel 注释）：违反 ⇒ 打印消息 + 拒绝绘制。
 void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& target,
                const VertexUniforms& vu, const FragmentUniforms& base, FrameStats* stats,
-               FragmentShaderFn fsOverride = nullptr);
+               FragmentShaderFn fsOverride = nullptr, VertexShaderFn vsOverride = nullptr);
 
 }  // namespace sr

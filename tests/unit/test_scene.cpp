@@ -1,12 +1,19 @@
 #include "app/scene.h"
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
 #include "harness.h"
+#include "math/transform.h"
 #include "math/vec.h"
+#include "render/builtin_shaders.h"
+#include "render/color.h"
+#include "render/render_backend.h"
 #include "scene/fit.h"
+#include "scene/golden_scene.h"   // goldenCheckerTexture（unlit 回归锚用的同一张单例贴图）
+#include "test_util.h"            // Canvas
 
 // M5.6：SceneState 是"画什么 + 从哪看 + 出了什么错"的持有者。它不含 Win32
 // （cmdline.cpp 先例），所以能直接列进 tests 目标。这四条行为是 app 接线里唯一
@@ -316,4 +323,345 @@ SR_TEST(scene_load_rejects_an_empty_path_with_its_own_message) {
     SR_ASSERT(s.model != nullptr);   // 旧模型保留
     if (s.model) SR_ASSERT_EQ(s.model->model.mesh.triangleCount(), 1);
     SR_ASSERT(s.requested == dir.p / "a.obj");   // 重试路径不被空请求覆盖
+}
+
+// ---- M6.6：光照接线 ----------------------------------------------------------
+
+namespace {
+
+// 渲一帧内容进已就地构造的 Canvas（与 test_lit_shaders 的 drawQuad 同形，剔除开）。
+void renderContent(Canvas& c, const sr::Mesh& mesh, sr::VertexShaderFn vs, sr::FragmentShaderFn fs,
+                   const sr::VertexUniforms& vu, const sr::FragmentUniforms& fu, sr::FrameStats& s) {
+    c.rt.color.clear(0xFF000000u);
+    c.rt.depth.clear();
+    sr::PipelineState st;
+    st.target = &c.rt;
+    st.vertexShader = vs;
+    st.fragmentShader = fs;
+    st.vu = vu;
+    st.fu = fu;
+    st.cull.backfaceCull = true;
+    st.stats = &s;
+    sr::BackendA backend;
+    backend.draw(mesh, st);
+}
+
+// 默认相机 + 单位 model 的 uniforms（球夹具用）。
+sr::VertexUniforms sphereVu(const sr::OrbitCamera& cam, float aspect) {
+    sr::VertexUniforms vu;
+    vu.model = sr::Mat4::identity();
+    vu.view = cam.view();
+    vu.proj = sr::makePerspective(sr::kDefaultFovYRadians, aspect, 0.1f, 100.0f);
+    sr::setNormalMatrix(vu, vu.model, "");
+    return vu;
+}
+
+sr::FragmentUniforms litFu() {
+    sr::FragmentUniforms fu;
+    fu.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
+    fu.sampler.wrapU = sr::WrapMode::ClampEdge;
+    fu.sampler.wrapV = sr::WrapMode::ClampEdge;
+    fu.sampler.filter = sr::FilterMode::Trilinear;
+    fu.sampler.useMip = true;
+    return fu;
+}
+
+}  // namespace
+
+SR_TEST(buildLightRig_decodes_colors_and_defaults_radius_to_three_times_the_scene) {
+    app::AppOptions o;
+    o.keyColor[0] = o.keyColor[1] = o.keyColor[2] = 0.5f;
+    o.pointColor[0] = 0.2f; o.pointColor[1] = 0.4f; o.pointColor[2] = 0.6f;
+    o.ambientColor[0] = o.ambientColor[1] = o.ambientColor[2] = 0.5f;
+    o.ambientIntensity = 0.5f;
+    sr::BBox bounds;
+    bounds.grow(sr::Vec3{-2.0f, -2.0f, -2.0f});
+    bounds.grow(sr::Vec3{2.0f, 2.0f, 2.0f});   // radius = 2√3 ≈ 3.4641
+    sr::OrbitCamera cam;
+    const sr::LightRig rig = app::buildLightRig(o, bounds, cam);
+
+    // 解码一次（D5）：0.5 ⇒ ≈0.2140，不是 0.5（没解）也不是 0.25（gamma²）。
+    SR_ASSERT_NEAR(rig.keyColor.r, sr::srgbToLinear(0.5f), 1e-4f);
+    SR_ASSERT_NEAR(rig.keyColor.g, sr::srgbToLinear(0.5f), 1e-4f);
+    SR_ASSERT_NEAR(rig.pointColor.r, sr::srgbToLinear(0.2f), 1e-4f);
+    SR_ASSERT_NEAR(rig.pointColor.g, sr::srgbToLinear(0.4f), 1e-4f);
+    SR_ASSERT_NEAR(rig.pointColor.b, sr::srgbToLinear(0.6f), 1e-4f);
+    // 环境色 = 解码 × 强度（--ambient 是线性乘子）。
+    SR_ASSERT_NEAR(rig.ambient.r, sr::srgbToLinear(0.5f) * 0.5f, 1e-4f);
+    // keyDir 归一化（原始 {-0.3,-0.8,-0.6}）。
+    SR_ASSERT_NEAR(sr::length(rig.keyDirWorld), 1.0f, 1e-5f);
+    // 半径默认 = 场景半径 ×3。
+    SR_ASSERT_NEAR(rig.attenuateRadius, bounds.radius() * 3.0f, 1e-4f);
+    // eye/point 默认 = cam.eye()（D5）。
+    const sr::Vec3 eye = cam.eye();
+    expectVec3Near(rig.eyeWorld, eye.x, eye.y, eye.z, 1e-5f);
+    expectVec3Near(rig.pointPosWorld, eye.x, eye.y, eye.z, 1e-5f);
+
+    // 空盒 ⇒ 半径 1.0（Ruling 49 退化哲学）。
+    const sr::LightRig rigEmpty = app::buildLightRig(o, sr::BBox{}, cam);
+    SR_ASSERT_NEAR(rigEmpty.attenuateRadius, 1.0f, 1e-6f);
+
+    // --point-pos 覆盖点光位置，但 eyeWorld 仍跟随相机。
+    o.pointPosGiven = true;
+    o.pointPos[0] = 9.0f; o.pointPos[1] = 8.0f; o.pointPos[2] = 7.0f;
+    const sr::LightRig rigOverride = app::buildLightRig(o, bounds, cam);
+    expectVec3Near(rigOverride.pointPosWorld, 9.0f, 8.0f, 7.0f, 1e-5f);
+    expectVec3Near(rigOverride.eyeWorld, eye.x, eye.y, eye.z, 1e-5f);
+
+    // 衰减开关原样透传（A 键/命令行 → rig.attenuate）。默认关、给了开。
+    SR_ASSERT_FALSE(rig.attenuate);   // 上面 o.attenuate 未设 ⇒ 默认 false
+    o.attenuate = true;
+    const sr::LightRig rigAtt = app::buildLightRig(o, bounds, cam);
+    SR_ASSERT(rigAtt.attenuate);
+    // 强度原样透传（线性乘子，不解码）。
+    SR_ASSERT_NEAR(rigAtt.keyIntensity, o.keyIntensity, 1e-6f);
+    SR_ASSERT_NEAR(rigAtt.pointIntensity, o.pointIntensity, 1e-6f);
+}
+
+SR_TEST(stepIntensity_reaches_zero_by_repeated_presses) {
+    // D24 的牙齿：加法步进能从 1.0 按到**精确 0**（夹钳）。乘法步进 ×0.9^11 ≈ 0.31，
+    // 永远到不了 0 ⇒ 这条在乘法实现下必红。
+    float v = 1.0f;
+    for (int i = 0; i < 11; ++i) app::stepIntensity(v, -0.1f);
+    SR_ASSERT_NEAR(v, 0.0f, 1e-6f);
+    // 上夹钳 [0,3]：2.95 + 0.1 = 3.05 ⇒ 夹到 3.0，再按仍 3.0。
+    float u = 2.95f;
+    app::stepIntensity(u, 0.1f);
+    SR_ASSERT_NEAR(u, 3.0f, 1e-6f);
+    app::stepIntensity(u, 0.1f);
+    SR_ASSERT_NEAR(u, 3.0f, 1e-6f);
+    // 下夹钳：0.05 - 0.1 = -0.05 ⇒ 夹到 0.0（不是负数）。
+    float w = 0.05f;
+    app::stepIntensity(w, -0.1f);
+    SR_ASSERT_NEAR(w, 0.0f, 1e-6f);
+}
+
+SR_TEST(reset_key_restores_defaults) {
+    app::SceneState s;
+    s.rig.keyIntensity = 2.5f;
+    s.rig.pointIntensity = 0.0f;
+    s.rig.attenuate = true;
+    s.resetLights();
+    const app::AppOptions d{};   // 内置默认是唯一真源
+    SR_ASSERT_NEAR(s.rig.keyIntensity, d.keyIntensity, 1e-6f);
+    SR_ASSERT_NEAR(s.rig.pointIntensity, d.pointIntensity, 1e-6f);
+    SR_ASSERT_FALSE(s.rig.attenuate);
+}
+
+SR_TEST(scene_hangs_one_rig_on_both_stages) {
+    // Ruling 97：两个阶段的 lights/mat 指针都指向 scene 持有的那一份，不是拷贝。
+    app::SceneState s;
+    s.rig.keyIntensity = 1.23f;   // 标记值：证明挂的就是这个对象
+    sr::VertexUniforms vu;
+    sr::FragmentUniforms fu;
+    app::prepareFrameUniforms(s, 1280, 720, vu, fu);
+    SR_ASSERT(vu.lights == &s.rig);
+    SR_ASSERT(fu.lights == &s.rig);
+    SR_ASSERT(vu.lights == fu.lights);
+    SR_ASSERT(vu.mat == &s.proceduralMat);
+    SR_ASSERT(fu.mat == &s.proceduralMat);
+    SR_ASSERT(vu.mat == fu.mat);
+    SR_ASSERT_NEAR(vu.lights->keyIntensity, 1.23f, 1e-6f);
+    // 矩阵真的填了（view 非单位阵：相机有 pitch）。
+    SR_ASSERT_FALSE(s.normalMatrixDegenerate);
+    // 视点相关项刷新：eyeWorld = cam.eye()；非 --point-pos ⇒ pointPos 跟随。
+    const sr::Vec3 eye = s.camera.eye();
+    expectVec3Near(s.rig.eyeWorld, eye.x, eye.y, eye.z, 1e-5f);
+    expectVec3Near(s.rig.pointPosWorld, eye.x, eye.y, eye.z, 1e-5f);
+    // 相机转动后点光跟随（高光随拖拽移动的前提）。
+    s.camera.yaw += 1.0f;
+    app::prepareFrameUniforms(s, 1280, 720, vu, fu);
+    const sr::Vec3 eye2 = s.camera.eye();
+    expectVec3Near(s.rig.pointPosWorld, eye2.x, eye2.y, eye2.z, 1e-5f);
+    // --point-pos 固定时不跟随。
+    s.pointPosFromCmdline = true;
+    s.rig.pointPosWorld = sr::Vec3{9.0f, 8.0f, 7.0f};
+    s.camera.yaw += 1.0f;
+    app::prepareFrameUniforms(s, 1280, 720, vu, fu);
+    expectVec3Near(s.rig.pointPosWorld, 9.0f, 8.0f, 7.0f, 1e-5f);
+    expectVec3Near(s.rig.eyeWorld, s.camera.eye().x, s.camera.eye().y, s.camera.eye().z, 1e-5f);
+}
+
+SR_TEST(default_rig_on_the_lit_sphere_does_not_saturate) {
+    // D19 / §8.2 #7a 的前半：默认 rig 渲球，全图最大通道 < 255 **且**高光像素数 > 0。
+    // 高光像素 = 比"关掉高光（Ks=0）"的同像素亮 > 0.01 线性 ⇒ 高光项真的可见，不靠魔法阈值。
+    app::AppOptions o;   // 全默认
+    sr::OrbitCamera cam;
+    const sr::Mesh sphere = sr::makeUVSphere(1.0f, 24, 32);
+    const sr::LightRig rig = app::buildLightRig(o, sphere.bounds, cam);
+    sr::MaterialShade mat = sr::litDefaultMaterialShade();
+
+    sr::VertexUniforms vu = sphereVu(cam, 1.0f);
+    vu.lights = &rig;
+    vu.mat = &mat;
+    sr::FragmentUniforms fu = litFu();
+    fu.lights = &rig;
+    fu.mat = &mat;
+
+    Canvas full{128, 128};
+    sr::FrameStats sf;
+    renderContent(full, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, vu, fu, sf);
+    SR_ASSERT(sf.fragmentsWritten > 500);
+
+    int maxByte = 0;
+    for (int y = 0; y < 128; ++y) {
+        for (int x = 0; x < 128; ++x) {
+            const uint32_t p = full.rt.color.readPacked(x, y);
+            const int r = static_cast<int>((p >> 16) & 0xFFu);
+            const int g = static_cast<int>((p >> 8) & 0xFFu);
+            const int b = static_cast<int>(p & 0xFFu);
+            if (r > maxByte) maxByte = r;
+            if (g > maxByte) maxByte = g;
+            if (b > maxByte) maxByte = b;
+        }
+    }
+    SR_ASSERT(maxByte < 255);   // 不饱和（若默认太亮，改默认而不是改这条）
+
+    // 关高光对照（Ks=0），数被高光提亮的像素。
+    sr::MaterialShade noSpec = mat;
+    noSpec.specular = sr::LinearColor{0.0f, 0.0f, 0.0f};
+    sr::VertexUniforms vu2 = vu;
+    vu2.mat = &noSpec;
+    sr::FragmentUniforms fu2 = fu;
+    fu2.mat = &noSpec;
+    Canvas base{128, 128};
+    sr::FrameStats sb;
+    renderContent(base, sphere, sr::transformVS, sr::blinnPhongPerPixelFS, vu2, fu2, sb);
+    int highlight = 0;
+    for (int y = 0; y < 128; ++y) {
+        for (int x = 0; x < 128; ++x) {
+            const float f = sr::decodeSRGB(full.rt.color.readPacked(x, y)).r;
+            const float b0 = sr::decodeSRGB(base.rt.color.readPacked(x, y)).r;
+            if (f > b0 + 0.01f) ++highlight;
+        }
+    }
+    SR_ASSERT(highlight > 0);   // 高光看得见
+}
+
+SR_TEST(attenuate_radius_zero_is_rejected_or_clamped_before_shading) {
+    // P97：--attenuate-radius 0 在解析层被拒（点名 flag），且 buildLightRig 对程序化 0/负数
+    // 夹到正值 —— 双保险，绝不让 0 到达 shading.h 的 d/radius 除法。
+    app::AppOptions o;
+    std::string err;
+    char arg0[] = "soft-raster";
+    char arg1[] = "--attenuate-radius";
+    char arg2[] = "0";
+    char* argv[] = {arg0, arg1, arg2};
+    SR_ASSERT_FALSE(app::parseCmdline(3, argv, o, err));
+    SR_ASSERT(err.find("--attenuate-radius") != std::string::npos);
+
+    sr::BBox b;
+    b.grow(sr::Vec3{-1.0f, -1.0f, -1.0f});
+    b.grow(sr::Vec3{1.0f, 1.0f, 1.0f});
+    sr::OrbitCamera cam;
+    o = app::AppOptions{};
+    o.attenuateRadius = 0.0f;   // 程序化塞 0（绕过解析层）
+    const sr::LightRig rig = app::buildLightRig(o, b, cam);
+    SR_ASSERT(rig.attenuateRadius > 0.0f);
+    o.attenuateRadius = -5.0f;
+    const sr::LightRig rig2 = app::buildLightRig(o, b, cam);
+    SR_ASSERT(rig2.attenuateRadius > 0.0f);
+}
+
+SR_TEST(hud_shows_linear_and_raw_for_light_colors) {
+    // D10：输入值与线性值都显示。输入非 0/1 时两个串必须不同；输入 0/1 时相同
+    // （解码曲线两端精确）⇒ 显示不会静默坍缩成一个。
+    app::AppOptions o;
+    o.keyColor[0] = o.keyColor[1] = o.keyColor[2] = 0.5f;
+    app::SceneState s;
+    s.rig = app::buildLightRig(o, sr::BBox{}, s.camera);
+    const std::string line = app::shadeHudLine(o, s);
+    char raw[64], lin[64];
+    std::snprintf(raw, sizeof(raw), "%.2f,%.2f,%.2f", o.keyColor[0], o.keyColor[1], o.keyColor[2]);
+    const sr::LinearColor lc = sr::decodeLightColor(0.5f, 0.5f, 0.5f);
+    std::snprintf(lin, sizeof(lin), "%.2f,%.2f,%.2f", lc.r, lc.g, lc.b);
+    SR_ASSERT(line.find(raw) != std::string::npos);
+    SR_ASSERT(line.find(lin) != std::string::npos);
+    SR_ASSERT(std::string(raw) != std::string(lin));   // 0.5 ⇒ 0.50 vs 0.21
+    SR_ASSERT(line.find("PHONG") != std::string::npos);
+    SR_ASSERT(line.find("ATT OFF") != std::string::npos);
+
+    // 输入 1.0 ⇒ 原始与线性相同（两端精确）。
+    o.keyColor[0] = o.keyColor[1] = o.keyColor[2] = 1.0f;
+    s.rig = app::buildLightRig(o, sr::BBox{}, s.camera);
+    const std::string line2 = app::shadeHudLine(o, s);
+    char raw2[64], lin2[64];
+    std::snprintf(raw2, sizeof(raw2), "%.2f,%.2f,%.2f", 1.0f, 1.0f, 1.0f);
+    const sr::LinearColor lc2 = sr::decodeLightColor(1.0f, 1.0f, 1.0f);
+    std::snprintf(lin2, sizeof(lin2), "%.2f,%.2f,%.2f", lc2.r, lc2.g, lc2.b);
+    SR_ASSERT(line2.find(raw2) != std::string::npos);
+    SR_ASSERT(std::string(raw2) == std::string(lin2));
+}
+
+SR_TEST(shade_mode_cycle_and_plan_route_the_three_shaders) {
+    SR_ASSERT(app::parseShadeMode("unlit") == app::ShadeMode::Unlit);
+    SR_ASSERT(app::parseShadeMode("gouraud") == app::ShadeMode::Gouraud);
+    SR_ASSERT(app::parseShadeMode("phong") == app::ShadeMode::Phong);
+    // 循环：Phong → Gouraud → Unlit → Phong（默认按一下到 Gouraud）。
+    SR_ASSERT(app::cycleShadeMode(app::ShadeMode::Phong) == app::ShadeMode::Gouraud);
+    SR_ASSERT(app::cycleShadeMode(app::ShadeMode::Gouraud) == app::ShadeMode::Unlit);
+    SR_ASSERT(app::cycleShadeMode(app::ShadeMode::Unlit) == app::ShadeMode::Phong);
+    // 路由表（P101：默认 FS 只在这里写一份）。
+    const app::ShadePlan u = app::planShade(app::ShadeMode::Unlit);
+    SR_ASSERT(u.vertexShader == sr::transformVS);
+    SR_ASSERT(u.fragmentShader == sr::texturedFS);
+    SR_ASSERT(std::string(u.name) == "UNLIT");
+    const app::ShadePlan g = app::planShade(app::ShadeMode::Gouraud);
+    SR_ASSERT(g.vertexShader == sr::lambertVS);
+    SR_ASSERT(g.fragmentShader == sr::lambertPerVertexFS);
+    SR_ASSERT(std::string(g.name) == "GOURAUD");
+    const app::ShadePlan p = app::planShade(app::ShadeMode::Phong);
+    SR_ASSERT(p.vertexShader == sr::transformVS);
+    SR_ASSERT(p.fragmentShader == sr::blinnPhongPerPixelFS);
+    SR_ASSERT(std::string(p.name) == "PHONG");
+}
+
+SR_TEST(nm_degenerate_flag_reaches_the_hud) {
+    // P98：setNormalMatrix 的 bool 被消费进 normalMatrixDegenerate，HUD 据此显示。
+    app::SceneState s;
+    const app::AppOptions o;
+    s.normalMatrixDegenerate = false;
+    SR_ASSERT(app::shadeHudLine(o, s).find("NM DEGENERATE") == std::string::npos);
+    s.normalMatrixDegenerate = true;
+    SR_ASSERT(app::shadeHudLine(o, s).find("NM DEGENERATE") != std::string::npos);
+    // 奇异 model ⇒ prepareFrameUniforms 置位；单位阵 ⇒ 复位。
+    s.modelMatrix = sr::Mat4::scale(sr::Vec3{0.0f, 1.0f, 1.0f});
+    sr::VertexUniforms vu;
+    sr::FragmentUniforms fu;
+    app::prepareFrameUniforms(s, 64, 64, vu, fu);
+    SR_ASSERT(s.normalMatrixDegenerate);
+    s.modelMatrix = sr::Mat4::identity();
+    app::prepareFrameUniforms(s, 64, 64, vu, fu);
+    SR_ASSERT_FALSE(s.normalMatrixDegenerate);
+}
+
+SR_TEST(unlit_mode_reproduces_the_unlit_picture) {
+    // app 通路的 M4/M5 回归锚：--shade unlit 的画面必须与 BASE 的显式装配逐字节相同。
+    // oracle = BASE renderFrame 程序分支的字面装配（transformVS + texturedFS，lights/mat
+    // 全 nullptr）；新侧走 planShade(Unlit) + prepareFrameUniforms（挂 &rig）。texturedFS
+    // 不读 lights/mat ⇒ 挂了指针也不改像素。两侧都用生产单例（fallbackCube/goldenChecker）。
+    app::SceneState s;   // 默认相机 yaw0/pitch0.35/dist5，near0.1/far100
+    sr::VertexUniforms vuOld;
+    vuOld.model = sr::Mat4::identity();
+    vuOld.view = s.camera.view();
+    vuOld.proj = sr::makePerspective(sr::kDefaultFovYRadians, 1.0f, s.nearPlane, s.farPlane);
+    sr::setNormalMatrix(vuOld, vuOld.model, "");
+    // lights/mat 保持 nullptr（BASE 原样）
+    sr::FragmentUniforms fuOld = litFu();
+    fuOld.texture = &sr::goldenCheckerTexture();
+    Canvas old{128, 128};
+    sr::FrameStats so;
+    renderContent(old, app::fallbackCube(), sr::transformVS, sr::texturedFS, vuOld, fuOld, so);
+
+    s.shade = app::ShadeMode::Unlit;
+    sr::VertexUniforms vuNew;
+    sr::FragmentUniforms fuNew = litFu();   // baseColor/sampler 与 oracle 同（提交分支自填的那半）
+    app::prepareFrameUniforms(s, 128, 128, vuNew, fuNew);   // 覆写 lights/mat 指针为 &rig/&proceduralMat
+    const app::ShadePlan sp = app::planShade(s.shade);
+    fuNew.texture = &sr::goldenCheckerTexture();
+    Canvas neu{128, 128};
+    sr::FrameStats sn;
+    renderContent(neu, app::fallbackCube(), sp.vertexShader, sp.fragmentShader, vuNew, fuNew, sn);
+    SR_ASSERT(so.fragmentsWritten > 100);
+    SR_ASSERT(old.colorMem == neu.colorMem);   // 逐字节相同
 }

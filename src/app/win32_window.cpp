@@ -245,6 +245,16 @@ LRESULT Window::handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     // VK_0..VK_9 —— 写 VK_1 会得到 C2065，症状像"这个键不存在"，其实只是宏没开。）
                     case '1': in->toggleMip = true; break;
                     case '2': in->cycleFilter = true; break;
+                    // M6.6：`3` 与上面的数字同族（VK 字面值 = ASCII '3'）。
+                    case '3': in->cycleShade = true; break;
+                    case 'A': in->toggleAttenuate = true; break;
+                    case '0': in->resetLights = true; break;
+                    // OEM 键（US 布局）：VK_OEM_4='[' VK_OEM_6=']' VK_OEM_MINUS='-' VK_OEM_PLUS='='。
+                    // 与 VK_0..9 不同，这些常量在本 SDK 的 WINVER 下恒有定义（winuser.h）。
+                    case VK_OEM_4: in->stepPointDown = true; break;   // [
+                    case VK_OEM_6: in->stepPointUp = true; break;     // ]
+                    case VK_OEM_MINUS: in->stepKeyDown = true; break; // -
+                    case VK_OEM_PLUS: in->stepKeyUp = true; break;    // =
                     default: break;
                 }
             }

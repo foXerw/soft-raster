@@ -366,3 +366,133 @@ SR_TEST(cmdline_rejects_emit_checker_tga_together_with_golden_write_obj) {
     SR_ASSERT_FALSE(ok);
     SR_ASSERT(err.find("emit-checker-tga") != std::string::npos);
 }
+
+// ---- M6.6：光照 flag（G-M6.4 / D24 命令行清单）------------------------------
+
+SR_TEST(cmdline_accepts_the_light_flags) {
+    // 设计 §9 的清单：--key-color --key-dir --key-intensity --point-color --point-pos
+    // --point-intensity --ambient --ambient-color --attenuate --attenuate-radius --shade
+    // （10 个光 flag + --shade = 11）。每个 flag 一条断言；值一律**原始 sRGB 域**存进
+    // AppOptions（解码归 buildLightRig，这里不许提前解）。
+    Args a{{"--key-color", "0.2", "0.4", "0.6",
+            "--key-dir", "0", "0", "-1",
+            "--key-intensity", "0.7",
+            "--point-color", "0.1", "0.3", "0.5",
+            "--point-pos", "1", "2", "3",
+            "--point-intensity", "0.9",
+            "--ambient", "0.5",
+            "--ambient-color", "0.8", "0.6", "0.4",
+            "--attenuate",
+            "--attenuate-radius", "5",
+            "--shade", "gouraud"}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT(err.empty());
+    SR_ASSERT_NEAR(o.keyColor[0], 0.2f, 1e-6f);
+    SR_ASSERT_NEAR(o.keyColor[1], 0.4f, 1e-6f);
+    SR_ASSERT_NEAR(o.keyColor[2], 0.6f, 1e-6f);
+    SR_ASSERT_NEAR(o.keyDir[0], 0.0f, 1e-6f);
+    SR_ASSERT_NEAR(o.keyDir[2], -1.0f, 1e-6f);
+    SR_ASSERT_NEAR(o.keyIntensity, 0.7f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointColor[0], 0.1f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointColor[1], 0.3f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointColor[2], 0.5f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointPos[0], 1.0f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointPos[1], 2.0f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointPos[2], 3.0f, 1e-6f);
+    SR_ASSERT(o.pointPosGiven);
+    SR_ASSERT_NEAR(o.pointIntensity, 0.9f, 1e-6f);
+    SR_ASSERT_NEAR(o.ambientIntensity, 0.5f, 1e-6f);
+    SR_ASSERT_NEAR(o.ambientColor[0], 0.8f, 1e-6f);
+    SR_ASSERT_NEAR(o.ambientColor[1], 0.6f, 1e-6f);
+    SR_ASSERT_NEAR(o.ambientColor[2], 0.4f, 1e-6f);
+    SR_ASSERT(o.attenuate);
+    SR_ASSERT_NEAR(o.attenuateRadius, 5.0f, 1e-6f);
+    SR_ASSERT(o.shade == "gouraud");
+
+    // 缺值报错必须带 flag 名（用户唯一能立刻行动的信息）。逐个 valued flag 验。
+    const char* valued[] = {"--key-color", "--key-dir", "--key-intensity", "--point-color",
+                            "--point-pos", "--point-intensity", "--ambient", "--ambient-color",
+                            "--attenuate-radius", "--shade"};
+    for (const char* f : valued) {
+        Args m{{f}};
+        parse(m, ok, err);
+        SR_ASSERT_FALSE(ok);
+        if (err.find(f) == std::string::npos)
+            std::printf("[cmdline] %s 缺值错误是：%s\n", f, err.c_str());
+        SR_ASSERT(err.find(f) != std::string::npos);
+    }
+    // 三元组只给一个分量 ⇒ 第二个分量缺值，同样点名 flag（不是静默补 0）。
+    Args partial{{"--key-color", "0.5"}};
+    parse(partial, ok, err);
+    SR_ASSERT_FALSE(ok);
+    SR_ASSERT(err.find("--key-color") != std::string::npos);
+}
+
+SR_TEST(cmdline_shade_mode_parses_and_rejects_typo) {
+    bool ok = false;
+    std::string err;
+    {
+        Args a{{"--shade", "unlit"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT(o.shade == "unlit");
+    }
+    {
+        Args a{{"--shade", "gouraud"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT(o.shade == "gouraud");
+    }
+    {
+        Args a{{"--shade", "phong"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT(o.shade == "phong");
+    }
+    {
+        // 拼错必须响亮拒绝（与 --backend c 同形）：静默退回默认会让人以为拼对了。
+        Args a{{"--shade", "phongg"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--shade") != std::string::npos);
+        SR_ASSERT(err.find("phongg") != std::string::npos);
+    }
+    {
+        // 默认就是 phong（D19）：不给 --shade 时不是 unlit。
+        Args a{{}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT(o.shade == "phong");
+    }
+}
+
+SR_TEST(cmdline_light_defaults_match_d19_and_attenuate_radius_sentinel) {
+    // 默认值是不饱和高光的前提（D19）。pointIntensity 从简报初稿 1.0 下调到 0.4 的
+    // 推导见 test_scene 的 default_rig_on_the_lit_sphere_does_not_saturate。
+    Args a{{}};
+    bool ok = false;
+    std::string err;
+    const auto o = parse(a, ok, err);
+    SR_ASSERT(ok);
+    SR_ASSERT_NEAR(o.keyIntensity, 0.35f, 1e-6f);
+    SR_ASSERT_NEAR(o.pointIntensity, 0.4f, 1e-6f);
+    SR_ASSERT_FALSE(o.attenuate);          // D7 默认关
+    SR_ASSERT_FALSE(o.pointPosGiven);      // 默认跟随 eye（D5）
+    SR_ASSERT(o.attenuateRadius < 0.0f);   // 哨兵：默认 = bounds.radius()*3，由 buildLightRig 算
+    // --attenuate-radius 0 / 负数在解析层就被拒（P97：不许到达 shading.h 的除法）。
+    {
+        Args z{{"--attenuate-radius", "0"}};
+        parse(z, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--attenuate-radius") != std::string::npos);
+    }
+    {
+        Args n{{"--attenuate-radius", "-2"}};
+        parse(n, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--attenuate-radius") != std::string::npos);
+    }
+}

@@ -123,7 +123,7 @@ std::string hudAscii(const std::string& utf8) {
 // 渲染一整帧。M5.6 起画面内容由 SceneState 决定：model == nullptr ⇒ 程序生成的
 // 立方体（M2–M4 的老画面，逐字节不变是这条分支的回归证据）；非空 ⇒ drawModel 逐组提交。
 void renderFrame(sr::RenderTarget& target, float phase, const std::string& statusLine,
-                 const app::SceneState& scene) {
+                 app::SceneState& scene, const app::AppOptions& opts) {
     target.depth.clear();
     // 背景从"全屏渐变填充"换成纯色 clear。
     // 渐变是 M0 的验收物（当时除了它没有别的东西可画），但它每帧要做 width*height 次
@@ -140,26 +140,19 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
 
     sr::FrameStats stats;
     static sr::BackendA backend;
+    // M6.6（Ruling 97）：uniforms 的矩阵 + 光照指针由 prepareFrameUniforms 从 scene 单一真源
+    // 组装（vu.lights == fu.lights == &scene.rig，可单测）。物体不自转：旋转在轨道相机，
+    // model 恒单位阵；near/far 来自 SceneState（fit 写入），fov 与 refit 同一常量（P24）。
+    // 法线矩阵走 setNormalMatrix（P91 单一实现），其成败记进 scene.normalMatrixDegenerate（P98）。
     sr::VertexUniforms vu;
-    // 物体不自转：旋转交给轨道相机，鼠标拖拽直接改变 yaw/pitch。
-    // "转相机"与"转物体"在画面上等价，但只有前者能让用户觉得自己抓住了物体。
-    vu.model = sr::Mat4::identity();
-    vu.view = scene.camera.view();
-    // near/far 来自 SceneState（fit 写入），不再硬编码 0.1/100；fov 与 SceneState::refit
-    // 取**同一个常量**（P24：fit 用的角与投影用的角漂移，症状是"某些模型装不下"）。
-    vu.proj = sr::makePerspective(sr::kDefaultFovYRadians,
-                                  static_cast<float>(target.color.width) /
-                                      static_cast<float>(target.color.height),
-                                  scene.nearPlane, scene.farPlane);
-    // M6.0：法线矩阵一律走 makeNormalMatrix（M6.9 的 grep 守卫禁止生产侧写单位阵字面量）。
-    // 这里的 model 恒为单位阵（旋转在轨道相机），构造上不会奇异；万一失败，
-    // last-good 就是单位阵本身 —— 记一条诊断，画面继续，不退出也不黑屏（M5.6 同原则）。
-    // P91（M6.3）：if/兜底/诊断块收进 setNormalMatrix（pipeline.h），四个生产点共用一份。
-    sr::setNormalMatrix(vu, vu.model, "");
+    sr::FragmentUniforms fu;
+    app::prepareFrameUniforms(scene, target.color.width, target.color.height, vu, fu);
 
-    // M6.5（D23）：视图 → "这次提交用哪个 FS + 帧末走哪个 sink"。normal 是 FS 覆写，
-    // depth/gray 是帧末后处理 —— 两种机制并存，分界写在 sink.h / app/view_mode.h。
-    const app::ViewPlan plan = app::planView(g_viewMode, sr::texturedFS);
+    // M6.6：着色模式 → 默认 VS/FS（planShade，P101 默认 FS 只此一份）。
+    const app::ShadePlan shadePlan = app::planShade(scene.shade);
+    // M6.5（D23）：视图 → "FS 覆写 + 帧末 sink"。把着色模式的默认 FS 喂给 planView 当
+    // defaultFS：视图不覆写时原样透传 ⇒ 提交点直接用 plan.fragmentShader，不再三元值重述。
+    const app::ViewPlan plan = app::planView(g_viewMode, shadePlan.fragmentShader);
 
     if (scene.model == nullptr) {
         // 老路径（M2–M4）：立方体 + 程序棋盘。这一分支的像素必须逐字节不变 ——
@@ -167,21 +160,19 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // （fallbackCube 单例）：renderFrame 只负责画，不持有场景内容。
         sr::PipelineState st;
         st.target = &target;
-        st.vertexShader = sr::transformVS;
-        // M4 的可见成果：贴一张程序生成的 checker。
-        // 顶点色路径（vertexColorFS）在这里退出画面，但 Mesh 里的 colors 仍然保留 ——
-        // M6 的光照 shader 还要它（M6.3 的 lambertVS 已消费：有效 albedo = 顶点色 × Kd，
-        // D17，承诺兑现），而且 W 键看背面时"哪一面是哪个颜色"仍然读得出来。
-        // M6.5（D23）：normal 视图覆写 FS；其余视图 plan 原样带着 texturedFS。
-        st.fragmentShader = plan.useFragmentShader ? plan.fragmentShader : sr::texturedFS;
+        // M6.6：VS 跟着色模式（unlit/phong=transformVS，gouraud=lambertVS）。
+        st.vertexShader = shadePlan.vertexShader;
+        // M4 的可见成果：贴一张程序生成的 checker。顶点色仍保留 —— Gouraud 的 lambertVS
+        // 消费它（albedo = 顶点色 × Kd，D17）；W 键看背面时"哪面哪个颜色"也仍读得出。
+        // P101：plan.fragmentShader 已是"视图覆写或着色默认 FS"，不再三元值重述 planView。
+        st.fragmentShader = plan.fragmentShader;
         st.depthTest = true;
         st.depthWrite = true;
         st.cull.backfaceCull = !g_showBackfaces;
+        st.fu = fu;   // lights/mat 指针来自 prepareFrameUniforms（Ruling 97）
         // baseColor 是乘上去的材质 tint，不是兜底色 ⇒ 给白，否则参考图与窗口都会暗一档。
         st.fu.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};
         // 贴图与 golden 用**同一个单例**：窗口里看到的那张贴图就是参考图里那一张。
-        // 这不是偷懒，是让"我在窗口里验收过的画面"与"golden 守住的画面"是同一个东西 ——
-        // 两者各自建一张图时，改了一边的参数不会让另一边变红。
         st.fu.texture = &sr::goldenCheckerTexture();
         // ClampEdge 是"每面一整张贴图"的特例语义（Ruling 37），**只属于这个立方体**；
         // 导入模型走下面的 Repeat。理由见 golden_scene.cpp 的 goldenSampler()。
@@ -193,23 +184,22 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         st.stats = &stats;
         backend.draw(app::fallbackCube(), st);
     } else {
-        // 导入模型（M5.4 drawModel）：逐组一次 drawRange，Kd/贴图按组覆写。
-        sr::FragmentUniforms base;
+        // 导入模型（M5.4 drawModel）：逐组一次 drawRange，Kd/贴图/材质按组覆写。
+        sr::FragmentUniforms base = fu;   // lights/mat 指针来自 prepareFrameUniforms（Ruling 97）
         base.baseColor = sr::LinearColor{1.0f, 1.0f, 1.0f};   // drawModel 按组覆写成线性 Kd
         // 导入模型用 **Repeat**：外部模型的 uv 常越界（平铺语义）。ClampEdge 是
         // "每面一整张贴图"的特例语义（Ruling 37），只属于上面的 golden 立方体 ——
         // 两条路径的 wrap 不同是故意的，不是漏改。
         base.sampler.wrapU = sr::WrapMode::Repeat;
         base.sampler.wrapV = sr::WrapMode::Repeat;
-        // `1`/`2` 两个旋钮对导入模型同样生效：传活的应用状态，别在导入路径上
-        // 重新发明第二条采样状态路径（M4 旋钮的自然延伸）。
+        // `1`/`2` 两个旋钮对导入模型同样生效：传活的应用状态。
         base.sampler.filter = g_filter;
         base.sampler.useMip = g_useMip;
-        // M6.5（D23）：导入模型路径同样吃视图的 FS 覆写（drawModel 的 fsOverride
-        // 接缝；nullptr = 既有 texturedFS 语义）。否则切到 NORMAL 时 HUD 说法线、
-        // 像素却仍是贴图 —— 画面与标签撒谎比没有视图更糟。
+        // M6.6：FS 用 plan.fragmentShader（视图覆写或着色默认 FS，P101）；VS 用着色模式的
+        // VS（Gouraud=lambertVS，逐组读 mat->diffuse）。unlit 时 plan.fragmentShader=texturedFS
+        // ⇒ 与旧的 nullptr 语义逐字节相同。NORMAL 视图仍覆写 FS（画面与标签不许撒谎）。
         sr::drawModel(backend, *scene.model, target, vu, base, &stats,
-                      plan.useFragmentShader ? plan.fragmentShader : nullptr);
+                      plan.fragmentShader, shadePlan.vertexShader);
     }
 
     // HUD 文字由我们自己画（设计文档 §10.3：屏幕上不该出现一个不是我们算出来的像素）。
@@ -244,6 +234,12 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         sr::drawText(target.color, 4, line2Y, line2,
                      sr::encodeSRGB({0.9f, 0.85f, 0.6f}), bg, 1);
     }
+    // M6.6（D10）第三行：着色模式 + 光参数（输入值→线性值都显示）+ Ka + 衰减 + NM DEGENERATE。
+    // 截图与离屏路径同样画（M0 先例：字体对不对要能靠一张 BMP 判）。字符串组装在 scene.cpp
+    // 的 shadeHudLine（可单测）；这里只负责画。y 偏移 = 第二行底 + 4。
+    const int line3Y = line2Y + sr::kGlyphHeightPx + 4;
+    sr::drawText(target.color, 4, line3Y, hudAscii(app::shadeHudLine(opts, scene)),
+                 sr::encodeSRGB({0.6f, 0.8f, 0.9f}), bg, 1);
 }
 
 int saveScreenshot(const sr::RenderTarget& target, const std::filesystem::path& path,
@@ -295,6 +291,17 @@ void loadObjIntoScene(app::SceneState& scene, const std::filesystem::path& objPa
     }
 }
 
+// M6.6：从命令行组装场景光照（着色模式 + rig）。在 startup 与每次载入后调用 ——
+// 载入换了模型 ⇒ 包围盒变了 ⇒ 衰减半径默认（半径×3）要跟着新尺度重算。载入即重新应用
+// CLI 光参数（一次"出厂光照"），按键步进的活值在两次载入之间保持。
+void initSceneLighting(app::SceneState& scene, const app::AppOptions& o) {
+    scene.shade = app::parseShadeMode(o.shade);
+    const sr::BBox& bounds =
+        scene.model ? scene.model->model.mesh.bounds : app::fallbackCube().bounds;
+    scene.rig = app::buildLightRig(o, bounds, scene.camera);
+    scene.pointPosFromCmdline = o.pointPosGiven;
+}
+
 int runOffscreen(const app::AppOptions& o) {
     g_gradientBackground = o.gradient;   // 离屏默认也走纯色，golden 场景自己决定背景
     auto surface = app::createOffscreenSurface(o.width, o.height);
@@ -309,6 +316,7 @@ int runOffscreen(const app::AppOptions& o) {
         // nativePath：全仓库唯一的 UTF-8→path 转换点（D18）。argv 已在 main 开头统一成 UTF-8。
         loadObjIntoScene(scene, app::nativePath(o.obj), o.width, o.height);
     }
+    initSceneLighting(scene, o);   // M6.6：着色模式 + rig（载入后组装，半径默认跟模型尺度）
 
     sr::Timer total;
     std::vector<double> frameMs;
@@ -319,7 +327,7 @@ int runOffscreen(const app::AppOptions& o) {
         const std::string status = "OFFSCREEN FRAME " + std::to_string(i + 1) + "/" +
                                    std::to_string(o.frames) + "  " + std::to_string(o.width) + "X" +
                                    std::to_string(o.height);
-        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, scene);
+        renderFrame(target, static_cast<float>(i) / static_cast<float>(o.frames), status, scene, o);
         frameMs.push_back(frameTimer.elapsedMs());
     }
     const double ms = total.elapsedMs();
@@ -359,6 +367,7 @@ int runWindow(const app::AppOptions& o) {
     std::printf("[window] P=暂停 O=单步 S=截图 V=视图 Esc=退出\n");
     std::printf("[window] 1=开关 mip（关掉后斜面和远处会闪） 2=采样模式 nearest/bilinear/trilinear\n");
     std::printf("[window] R=重载模型 F=重新 fit（不动视角） 拖放 .obj 进窗口即可载入\n");
+    std::printf("[window] 3=着色模式(unlit/gouraud/phong) [/]=点光强度 -/==方向光强度 A=衰减 0=恢复默认\n");
 
     sr::RenderTarget& target = surface->target();
     sr::Timer clock;
@@ -377,6 +386,7 @@ int runWindow(const app::AppOptions& o) {
         // nativePath：全仓库唯一的 UTF-8→path 转换点（D18）。
         loadObjIntoScene(scene, app::nativePath(o.obj), o.width, o.height);
     }
+    initSceneLighting(scene, o);   // M6.6：着色模式 + rig（载入后组装）
     // 自动旋转在**没有拖拽**时进行；拖拽一次之后从新朝向接着转（不是回到原角度），
     // 否则用户刚摆好的视角会被下一帧覆盖掉，那种"抢镜头"的观感非常差。
     bool dragging = false;
@@ -416,6 +426,26 @@ int runWindow(const app::AppOptions& o) {
             g_filter = nextFilter(g_filter);
             std::printf("[filter] %s\n", filterName(g_filter));
         }
+        // M6.6：着色模式与光参数按键（D24）。状态进终端 + HUD 第三行（"该看到什么必须在画面上"）。
+        if (input.cycleShade) {
+            scene.shade = app::cycleShadeMode(scene.shade);
+            std::printf("[shade] %s\n", app::planShade(scene.shade).name);
+        }
+        if (input.toggleAttenuate) {
+            scene.rig.attenuate = !scene.rig.attenuate;
+            std::printf("[attenuate] %s\n", scene.rig.attenuate ? "开" : "关");
+        }
+        if (input.resetLights) {
+            scene.resetLights();
+            std::printf("[lights] 恢复默认（key %.2f / point %.2f / 衰减关）\n",
+                        static_cast<double>(scene.rig.keyIntensity),
+                        static_cast<double>(scene.rig.pointIntensity));
+        }
+        // 加法步进 ±0.1，夹 [0,3] ⇒ 0 可达（"只留一盏灯"真能按出来，D24）。
+        if (input.stepPointUp) app::stepIntensity(scene.rig.pointIntensity, 0.1f);
+        if (input.stepPointDown) app::stepIntensity(scene.rig.pointIntensity, -0.1f);
+        if (input.stepKeyUp) app::stepIntensity(scene.rig.keyIntensity, 0.1f);
+        if (input.stepKeyDown) app::stepIntensity(scene.rig.keyIntensity, -0.1f);
         // F = 显式重 fit：只动 distance/target/near/far，yaw/pitch 归用户（D15）。
         // 不受 --no-fit 门控：fitEnabled 只管"载入后的自动 fit"，按 F 是手动请求。
         if (input.refit) scene.refit(target.color.width, target.color.height);
@@ -423,6 +453,7 @@ int runWindow(const app::AppOptions& o) {
         // 从未请求过模型（无 --obj 无拖放）时无事可做。
         if (input.reloadModel && !scene.requested.empty()) {
             loadObjIntoScene(scene, scene.requested, target.color.width, target.color.height);
+            initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
         }
         // 拖放（M5.6）：shell 给的路径已在 win32_window.cpp 转成 UTF-8，这里经
         // nativePath 走与 --obj 完全相同的入口（后缀守卫在 SceneState::load，A4）。
@@ -431,6 +462,7 @@ int runWindow(const app::AppOptions& o) {
         if (input.dropEvent) {
             loadObjIntoScene(scene, app::nativePath(input.droppedObj), target.color.width,
                              target.color.height);
+            initSceneLighting(scene, o);   // 换了模型 ⇒ 半径默认跟新尺度（M6.6）
         }
         if (input.screenshot) {
             ++screenshotCounter;
@@ -466,7 +498,7 @@ int runWindow(const app::AppOptions& o) {
                           g_useMip ? "ON" : "OFF", filterName(g_filter),
                           paused ? (dragging ? "  PAUSED DRAG" : "  PAUSED")
                                  : (dragging ? "  DRAG" : ""));
-            renderFrame(target, phase, buf, scene);
+            renderFrame(target, phase, buf, scene, o);
             // 与帧时间相关：掉帧时动画速度不变（float 累加，所以乘的是 float）。
             phase += static_cast<float>(0.35 * lastMs * 0.001);
             lastMs = frameTimer.elapsedMs();

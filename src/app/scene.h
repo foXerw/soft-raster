@@ -13,11 +13,32 @@
 #include <memory>
 #include <string>
 
+#include "app/cmdline.h"      // AppOptions（buildLightRig / resetLights / shadeHudLine 的原始输入）
 #include "loader/model.h"
+#include "math/mat.h"
+#include "render/lights.h"    // LightRig / MaterialShade / litDefaultMaterialShade
+#include "render/pipeline.h"  // VertexUniforms / FragmentUniforms / setNormalMatrix / shader fn 类型
 #include "scene/camera.h"
 #include "scene/mesh.h"
 
 namespace app {
+
+// M6.6：着色模式（与 M6.5 的 ViewMode 正交 —— 视图管"看哪个缓冲/法线"，着色管"怎么算颜色"）。
+// 默认 Phong（D19）。Unlit 必须逐字节复现 M4/M5 的老画面（app 通路的回归锚）。
+enum class ShadeMode : uint8_t { Unlit, Gouraud, Phong };
+
+// 着色模式 → "用哪个 VS + 哪个默认 FS + HUD 名字"。P101：默认 FS 只在这里写一份，
+// renderFrame 把它喂给 planView 当 defaultFS，视图不覆写时原样透传 —— 不再在提交点
+// 用三元值重述 planView 已经保证的事。
+struct ShadePlan {
+    sr::VertexShaderFn vertexShader;
+    sr::FragmentShaderFn fragmentShader;   // 该模式的默认 FS（视图覆写前）
+    const char* name;                      // "UNLIT"/"GOURAUD"/"PHONG"（ASCII，位图字体）
+};
+ShadePlan planShade(ShadeMode mode);
+// 3 键循环：Phong → Gouraud → Unlit → Phong（从默认按一下就到 Gouraud，肉眼门要用）。
+ShadeMode cycleShadeMode(ShadeMode mode);
+ShadeMode parseShadeMode(const std::string& s);   // parseCmdline 已校验；未知 defensive 回 Phong
 
 // 程序生成的兜底立方体（model == nullptr 时的 M2–M4 老画面）。进程内单例，与
 // goldenCheckerTexture 同一条纪律：窗口里看到的兜底模型与测试里断言的是同一个对象。
@@ -40,6 +61,25 @@ struct SceneState {
     // 请求）。empty = 从未有过可信请求。
     std::filesystem::path requested;
 
+    // ---- M6.6：光照的单一真源（Ruling 97）----
+    // rig 是 app 层**唯一**的 LightRig：renderFrame 的两个阶段都从它取指针，绝不在别处
+    // 再建第二份。于是 test_scene 能断言 vu.lights == fu.lights == &scene.rig —— 把
+    // "调用方把同一个对象挂到两个阶段"从约定变成可测的不变式（M6.1 的 RecordingBackend
+    // 只证明了 drawModel 拷贝一致，证明不了调用方）。
+    sr::LightRig rig;
+    // 程序几何（model == nullptr）的逐帧材质：litDefaultMaterialShade 的副本（D15）。
+    // 导入模型由 drawModel 逐组覆写，不用这一份。
+    sr::MaterialShade proceduralMat = sr::litDefaultMaterialShade();
+    ShadeMode shade = ShadeMode::Phong;
+    // P98：setNormalMatrix 的 bool 返回从此有消费者 —— 奇异 ⇒ 置位，HUD 第三行显示
+    // "NM DEGENERATE"（"该看到什么必须在画面上"；helper 的 stderr 在窗口会话里会被藏住）。
+    bool normalMatrixDegenerate = false;
+    // 点光位置是否来自 --point-pos（true ⇒ 世界固定；false ⇒ 每帧跟随 camera.eye()，D5）。
+    bool pointPosFromCmdline = false;
+    // 物体模型矩阵。今天恒为单位阵（旋转在轨道相机），但持有在这里让"奇异 model ⇒
+    // normalMatrixDegenerate"这条路径可被单测触达，也给将来逐帧变化的 model 一个家。
+    sr::Mat4 modelMatrix = sr::Mat4::identity();
+
     // 成功：换上**新建**的模型、清 errorLine、更新 label，返回 true。
     // 失败：旧 model 原样保留（先建新的再换指针，绝不先 reset()），只写 errorLine。
     // 两道守卫：入口守 .obj 后缀（大小写不敏感，argv 与拖放共用，非 .obj ⇒ 错误行，
@@ -54,6 +94,33 @@ struct SceneState {
     // 尺度）；yaw/pitch 从当前相机继承（fitCamera 的保证，D15：按 F 的人不是为了被
     // 重置视角）。model == nullptr 或退化包围盒 ⇒ 不动作（六个字段一个都不碰）。
     void refit(int width, int height);
+
+    // 0 键：两盏灯强度 + 衰减开关恢复**内置默认**（AppOptions{} 的字段初值，单一真源）。
+    // 不是恢复 CLI 覆盖值 —— "0 = 回到出厂画面"语义确定、可预期（D24）。颜色/半径不动。
+    void resetLights();
 };
+
+// 从命令行原始值（sRGB 域）组装 LightRig：颜色经 decodeLightColor 解码**一次**（D5），
+// keyDir 归一化，pointPos/eyeWorld 取 cam.eye()（--point-pos 覆盖 pointPos），
+// attenuateRadius 默认 = bounds.radius()*3（空盒/退化 ⇒ 1.0，Ruling 49），
+// 且 P97：radius 恒 >0（解析层已拒 <=0，这里再夹一道，绝不让 0 到达 shading.h 的除法）。
+sr::LightRig buildLightRig(const AppOptions& o, const sr::BBox& bounds, const sr::OrbitCamera& cam);
+
+// D24：强度**加法**步进 ±delta，夹到 [0,3] ⇒ 0 可达（"只留一盏灯"真能按出来）。
+// 乘法步进永远到不了 0，且上/下不对称 —— 那是第一版的错误。
+void stepIntensity(float& value, float delta);
+
+// 组装一帧的 uniforms（Ruling 97 的可测接缝）：先刷新 rig 的视点相关项（eyeWorld，
+// 以及非 --point-pos 时的 pointPosWorld），再填 model/view/proj/normalMatrix，并把
+// vu.lights/fu.lights 都指向 &scene.rig、vu.mat/fu.mat 都指向 &scene.proceduralMat。
+// normalMatrix 走 setNormalMatrix（P91 单一实现），其成败记进 scene.normalMatrixDegenerate（P98）。
+// 采样/贴图/baseColor 由各提交分支自己填（那是 app 全局旋钮，不属于场景状态）。
+void prepareFrameUniforms(SceneState& scene, int width, int height,
+                          sr::VertexUniforms& vu, sr::FragmentUniforms& fu);
+
+// D10：HUD 第三行。光色被 sRGB 解码过一次 ⇒ **输入值与线性值都显示**（只显示一个会让人
+// 算错期望）。强度取 rig 的当前值（按键步进后的活值），颜色原始值取 AppOptions。
+// normalMatrixDegenerate ⇒ 追加 "NM DEGENERATE"。纯字符串组装，可单测。
+std::string shadeHudLine(const AppOptions& o, const SceneState& scene);
 
 }  // namespace app

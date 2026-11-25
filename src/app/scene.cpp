@@ -1,8 +1,11 @@
 #include "app/scene.h"
 
+#include <cstdio>
 #include <utility>
 
 #include "loader/lex.h"   // displayPath（Ruling 62：消息里的路径不用 .string()）
+#include "math/transform.h"      // makePerspective
+#include "render/builtin_shaders.h"   // planShade 的三个 shader
 #include "scene/fit.h"    // fitCamera + kDefaultFovYRadians（P24：fit 与投影同一个角）
 
 // 本 TU 不含任何 Win32 头（cmdline.cpp 先例）：它被 tests 目标直接编译，
@@ -97,6 +100,126 @@ void SceneState::refit(int width, int height) {
     const float lo = r * 1e-3f;
     camera.minDistance = lo > 1e-6f ? lo : 1e-6f;
     camera.maxDistance = r * 1e3f;
+}
+
+// ---- M6.6：光照接线 ----------------------------------------------------------
+
+sr::LightRig buildLightRig(const AppOptions& o, const sr::BBox& bounds, const sr::OrbitCamera& cam) {
+    sr::LightRig rig;
+    // keyDirWorld 是"照向"（lights.h），归一化在这里做一次（AppOptions 存原始值）。
+    // 零向量约定（vec.h）：--key-dir 0 0 0 ⇒ normalize 返回零 ⇒ N·L=0 ⇒ 方向光自然关掉。
+    rig.keyDirWorld = sr::normalize(sr::Vec3{o.keyDir[0], o.keyDir[1], o.keyDir[2]});
+    // 颜色解码**一次**（D5）：AppOptions 是 sRGB 域，这里经 decodeLightColor 进线性。
+    rig.keyColor = sr::decodeLightColor(o.keyColor[0], o.keyColor[1], o.keyColor[2]);
+    rig.keyIntensity = o.keyIntensity;
+    rig.pointColor = sr::decodeLightColor(o.pointColor[0], o.pointColor[1], o.pointColor[2]);
+    rig.pointIntensity = o.pointIntensity;
+    rig.eyeWorld = cam.eye();
+    rig.pointPosWorld = o.pointPosGiven
+                            ? sr::Vec3{o.pointPos[0], o.pointPos[1], o.pointPos[2]}
+                            : rig.eyeWorld;   // D5：默认跟随相机
+    rig.attenuate = o.attenuate;
+    // P97：radius 恒 >0。解析层已拒 <=0；这里对程序化塞入的 0/负数/哨兵再夹一道，
+    // 绝不让 0 到达 shading.h 的 d/radius 除法。默认 = 场景半径 ×3（空盒/退化 ⇒1.0，Ruling 49）。
+    float radius = o.attenuateRadius;
+    if (!(radius > 0.0f)) {
+        const float br = bounds.radius();
+        radius = (bounds.empty() || br < 1e-6f) ? 1.0f : br * 3.0f;
+    }
+    rig.attenuateRadius = radius;
+    // 环境光色 = 解码后的颜色 × 强度（--ambient 是线性乘子，与 key/point 的 color+intensity 同形）。
+    const sr::LinearColor amb =
+        sr::decodeLightColor(o.ambientColor[0], o.ambientColor[1], o.ambientColor[2]);
+    rig.ambient = sr::LinearColor{amb.r * o.ambientIntensity, amb.g * o.ambientIntensity,
+                                  amb.b * o.ambientIntensity};
+    return rig;
+}
+
+void stepIntensity(float& value, float delta) {
+    // D24：加法步进 ⇒ 0 可达（乘法永远到不了 0）。夹到 [0,3]。
+    value += delta;
+    if (value < 0.0f) value = 0.0f;
+    if (value > 3.0f) value = 3.0f;
+}
+
+ShadePlan planShade(ShadeMode mode) {
+    switch (mode) {
+        case ShadeMode::Unlit: return {sr::transformVS, sr::texturedFS, "UNLIT"};
+        case ShadeMode::Gouraud: return {sr::lambertVS, sr::lambertPerVertexFS, "GOURAUD"};
+        case ShadeMode::Phong: return {sr::transformVS, sr::blinnPhongPerPixelFS, "PHONG"};
+    }
+    return {sr::transformVS, sr::texturedFS, "UNLIT"};
+}
+
+ShadeMode cycleShadeMode(ShadeMode mode) {
+    switch (mode) {
+        case ShadeMode::Phong: return ShadeMode::Gouraud;
+        case ShadeMode::Gouraud: return ShadeMode::Unlit;
+        case ShadeMode::Unlit: return ShadeMode::Phong;
+    }
+    return ShadeMode::Phong;
+}
+
+ShadeMode parseShadeMode(const std::string& s) {
+    if (s == "unlit") return ShadeMode::Unlit;
+    if (s == "gouraud") return ShadeMode::Gouraud;
+    return ShadeMode::Phong;   // parseCmdline 已校验合法值；未知 defensive 回默认
+}
+
+void SceneState::resetLights() {
+    const AppOptions d{};   // 内置默认是唯一真源（不是 CLI 覆盖值）
+    rig.keyIntensity = d.keyIntensity;
+    rig.pointIntensity = d.pointIntensity;
+    rig.attenuate = d.attenuate;
+}
+
+void prepareFrameUniforms(SceneState& scene, int width, int height,
+                          sr::VertexUniforms& vu, sr::FragmentUniforms& fu) {
+    // 视点相关项每帧刷新：eyeWorld 跟随相机；非 --point-pos 时点光也跟随（高光随拖拽移动）。
+    scene.rig.eyeWorld = scene.camera.eye();
+    if (!scene.pointPosFromCmdline) scene.rig.pointPosWorld = scene.rig.eyeWorld;
+    vu.model = scene.modelMatrix;
+    vu.view = scene.camera.view();
+    vu.proj = sr::makePerspective(sr::kDefaultFovYRadians,
+                                  static_cast<float>(width) / static_cast<float>(height),
+                                  scene.nearPlane, scene.farPlane);
+    // P91 单一实现 + P98 消费 bool：奇异 ⇒ 置位（HUD 显示 NM DEGENERATE），画面继续。
+    scene.normalMatrixDegenerate = !sr::setNormalMatrix(vu, vu.model, "");
+    // Ruling 97：两个阶段挂**同一个**对象（不是拷贝）。
+    vu.lights = &scene.rig;
+    fu.lights = &scene.rig;
+    vu.mat = &scene.proceduralMat;
+    fu.mat = &scene.proceduralMat;
+}
+
+std::string shadeHudLine(const AppOptions& o, const SceneState& scene) {
+    const sr::LightRig& r = scene.rig;
+    // Ka：程序几何用 proceduralMat；导入模型用**第一组**的材质（多材质时显示首组，
+    // 逐组值在材质表里 —— HUD 是摘要行）。D9：Blender 常导出 Ka=0，显示出来才知道为什么没环境光。
+    float ka = scene.proceduralMat.ambient.r;
+    if (scene.model != nullptr && !scene.model->model.groups.empty()) {
+        const int32_t mi = scene.model->model.groups[0].material;
+        if (mi >= 0 && mi < static_cast<int32_t>(scene.model->model.materials.size())) {
+            ka = scene.model->model.materials[static_cast<size_t>(mi)].ambient.r;
+        }
+    }
+    // D10：光色被解码过一次 ⇒ 原始输入（o）与线性值（r）都显示，用 > 分隔。强度取 rig 活值。
+    char buf[320];
+    std::snprintf(buf, sizeof(buf),
+                  "SHADE %s  KEY %.2f,%.2f,%.2f>%.2f,%.2f,%.2f x%.2f  "
+                  "POINT %.2f,%.2f,%.2f>%.2f,%.2f,%.2f x%.2f  Ka %.2f  ATT %s%s",
+                  planShade(scene.shade).name,
+                  static_cast<double>(o.keyColor[0]), static_cast<double>(o.keyColor[1]),
+                  static_cast<double>(o.keyColor[2]),
+                  static_cast<double>(r.keyColor.r), static_cast<double>(r.keyColor.g),
+                  static_cast<double>(r.keyColor.b), static_cast<double>(r.keyIntensity),
+                  static_cast<double>(o.pointColor[0]), static_cast<double>(o.pointColor[1]),
+                  static_cast<double>(o.pointColor[2]),
+                  static_cast<double>(r.pointColor.r), static_cast<double>(r.pointColor.g),
+                  static_cast<double>(r.pointColor.b), static_cast<double>(r.pointIntensity),
+                  static_cast<double>(ka), r.attenuate ? "ON" : "OFF",
+                  scene.normalMatrixDegenerate ? "  NM DEGENERATE" : "");
+    return std::string(buf);
 }
 
 }  // namespace app

@@ -40,6 +40,30 @@ struct AppOptions {
     // 的字节写成 TGA（锚 2 的 provenance 入口，设计 §10）。
     std::string emitCheckerTga;
     bool help = false;
+
+    // ---- M6.6：光照参数（G-M6.4）。**一律存原始输入值（sRGB 域）** ----
+    // 解码只发生在 buildLightRig 一处（scene.cpp），避免"解两次"（D5/Review Focus 5）。
+    // 强度是线性乘子，不走解码；颜色三元组是 display-referred sRGB 浮点（与 MTL Kd 同源）。
+    std::string shade = "phong";        // unlit | gouraud | phong（默认 phong，D19）
+    float keyColor[3] = {1.0f, 1.0f, 1.0f};   // --key-color（sRGB）
+    // --key-dir：方向光"照向"的方向（原始值，buildLightRig 归一化）。默认与默认视线约 35°
+    // （§6.1 缓解头灯式点光把凹凸照平）：朝光源 = normalize(0.3,0.8,0.6)，与 eye 方向
+    // (0,sin0.35,cos0.35) 夹角 ≈ 36.6°。世界空间固定 ⇒ 拖拽时高光随视点移动。
+    float keyDir[3] = {-0.3f, -0.8f, -0.6f};
+    float keyIntensity = 0.35f;         // --key-intensity（D19 默认）
+    float pointColor[3] = {1.0f, 1.0f, 1.0f};   // --point-color（sRGB）
+    float pointPos[3] = {0.0f, 0.0f, 0.0f};     // --point-pos（世界坐标）
+    bool pointPosGiven = false;         // 未给 ⇒ 点光跟随相机 eye（D5）
+    // D19：默认参数必须让高光**不饱和**。简报初稿 pointIntensity=1.0，但无衰减时点光在
+    // 正对相机的球面点 N·L=1 ⇒ 漫反射 alone ≈1.0 再叠高光必撞 255。按 D19"改默认不改断言"
+    // 下调到 0.4（峰值 ≈0.84 线性 ⇒ ~238 字节，留余量；推导见 test_scene 与本报告）。
+    float pointIntensity = 0.4f;        // --point-intensity
+    float ambientIntensity = 1.0f;      // --ambient：环境光强度（线性乘子，乘到解码后的环境色）
+    float ambientColor[3] = {1.0f, 1.0f, 1.0f};   // --ambient-color（sRGB）
+    bool attenuate = false;             // --attenuate / A 键（D7 默认关）
+    // --attenuate-radius：<0 = 哨兵"用默认 = bounds.radius()*3"（空盒 ⇒1.0，Ruling 49）。
+    // 解析层拒绝 <=0（P97：不许 0 到达 shading.h 的除法）；buildLightRig 再夹一道防御。
+    float attenuateRadius = -1.0f;
 };
 
 // 解析失败时返回 false，并把可读的原因写进 err（包含出问题的 flag 名）。

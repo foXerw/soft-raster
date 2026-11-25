@@ -208,7 +208,7 @@ bool loadModel(const std::filesystem::path& objPath, LoadedModel& out, std::stri
 
 void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& target,
                const VertexUniforms& vu, const FragmentUniforms& base, FrameStats* stats,
-               FragmentShaderFn fsOverride) {
+               FragmentShaderFn fsOverride, VertexShaderFn vsOverride) {
     // 入口守 textures 生命周期不变式（model.h，Ruling 66）：要守的命题是"loadModel 返回后
     // textures 没有再增长过"，只需比较装载时冻住的 size —— O(1)、零分配。违反（追加或缩短）
     // ⇒ 打印消息 + 拒绝绘制：带着可能悬垂的裸指针继续画才是真危险（FragmentUniforms::texture
@@ -222,7 +222,8 @@ void drawModel(RenderBackend& backend, const LoadedModel& m, RenderTarget& targe
 
     PipelineState st;
     st.target = &target;
-    st.vertexShader = transformVS;
+    // vsOverride（M6.6）：着色模式的 VS 覆写（Gouraud 的 lambertVS）；nullptr = 既有 transformVS。
+    st.vertexShader = (vsOverride != nullptr) ? vsOverride : transformVS;
     // fsOverride（M6.5/D23）：视图计划的 FS 覆写（法线视图）；nullptr = 既有语义。
     // 无贴图时 texturedFS 自己退回 baseColor（Ruling 32）。
     st.fragmentShader = (fsOverride != nullptr) ? fsOverride : texturedFS;

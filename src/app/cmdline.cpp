@@ -191,6 +191,52 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
             continue;
         }
 
+        // ---- M6.6 光照 flag（G-M6.4）。值一律原始 sRGB 域，解码归 buildLightRig ----
+        // 三元组复用 nextFloat 三次：缺第 2/3 个分量同样点名 flag（不静默补 0）。
+        if (a == "--key-color" || a == "--point-color" || a == "--ambient-color" ||
+            a == "--key-dir" || a == "--point-pos") {
+            float* dst = a == "--key-color" ? out.keyColor
+                       : a == "--point-color" ? out.pointColor
+                       : a == "--ambient-color" ? out.ambientColor
+                       : a == "--key-dir" ? out.keyDir
+                       : out.pointPos;
+            for (int c = 0; c < 3; ++c) {
+                if (!p.nextFloat(a.c_str(), dst[c])) return false;
+            }
+            if (a == "--point-pos") out.pointPosGiven = true;
+            continue;
+        }
+        if (a == "--key-intensity" || a == "--point-intensity" || a == "--ambient") {
+            float v = 0.0f;
+            if (!p.nextFloat(a.c_str(), v)) return false;
+            if (!(v >= 0.0f)) return p.fail(std::string(a) + " 不能为负，收到 " + std::to_string(v));
+            if (a == "--key-intensity") out.keyIntensity = v;
+            else if (a == "--point-intensity") out.pointIntensity = v;
+            else out.ambientIntensity = v;
+            continue;
+        }
+        if (a == "--attenuate") {
+            out.attenuate = true;   // 布尔开关，无值（D7）
+            continue;
+        }
+        if (a == "--attenuate-radius") {
+            float v = 0.0f;
+            if (!p.nextFloat("--attenuate-radius", v)) return false;
+            // P97：radius>0 是 shading.h 除法的前提，必须在边界拒绝，不许 0/负数到达逐像素代码。
+            if (!(v > 0.0f)) return p.fail("--attenuate-radius 必须为正，收到 " + std::to_string(v));
+            out.attenuateRadius = v;
+            continue;
+        }
+        if (a == "--shade") {
+            std::string s;
+            if (!p.nextString("--shade", s)) return false;
+            if (s != "unlit" && s != "gouraud" && s != "phong") {
+                return p.fail("--shade 只接受 unlit|gouraud|phong，收到 '" + s + "'");
+            }
+            out.shade = s;
+            continue;
+        }
+
         if (!a.empty() && a[0] == '-') {
             return p.fail("未知选项 '" + a + "'（--help 看可用选项）");
         }
@@ -260,6 +306,17 @@ std::string usageString() {
            "                     把程序生成的 checker（makeCheckerImage，128x128）写成\n"
            "                     未压缩 32bpp TGA（bottom-up）。不渲染；assets/tga/checker.tga\n"
            "                     的 provenance 入口（M5 锚 2）\n"
+           "  --shade <mode>     着色模式 unlit|gouraud|phong，默认 phong（3 键运行时循环）\n"
+           "  --key-color <r g b>      方向光颜色（sRGB 0..1），默认 1 1 1\n"
+           "  --key-dir <x y z>        方向光\"照向\"的方向（世界空间，自动归一化）\n"
+           "  --key-intensity <f>      方向光强度（线性乘子），默认 0.35（-/= 键 ±0.1）\n"
+           "  --point-color <r g b>    点光颜色（sRGB 0..1），默认 1 1 1\n"
+           "  --point-pos <x y z>      点光世界坐标；不给则跟随相机 eye（[/] 键调强度）\n"
+           "  --point-intensity <f>    点光强度（线性乘子），默认 0.4\n"
+           "  --ambient <f>            环境光强度（线性乘子），默认 1.0\n"
+           "  --ambient-color <r g b>  环境光颜色（sRGB 0..1），默认 1 1 1\n"
+           "  --attenuate              打开点光距离衰减（A 键切换；默认关）\n"
+           "  --attenuate-radius <f>   衰减半径（必须为正）；默认 = 场景半径 ×3\n"
            "  --help, -h         显示本帮助\n";
 }
 
