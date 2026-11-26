@@ -3,8 +3,10 @@
 产品方 2026-11-24 在三个光形态里选了 **C**：一盏跟随相机的点光 + 一盏方向光，
 光源参数从命令行来、按键微调，`3` 切着色模式。其余 **D-nn 都是我（builder）的裁决**。
 
-**本文的第二版吸收了 fresh-context builder 的 10 处纠正**（其中 4 处是关于既有代码的事实错误、
-6 处是我提的断言在真实夹具上根本不成立）。逐条列在 §14。**第一版不能直接开工** ——
+**本文的第二版吸收了 fresh-context builder 的 11 处纠正**（4 处是关于既有代码的事实错误、
+6 处是我提的断言在真实夹具上根本不成立、1 处是 Ks/Ns/Ka 进 shader 通路的致命缺口 Q1。
+终审修复波留痕：此处原写"10 处（4+6）"，漏计 §14.11 的 Q1 —— §14 实列 11 条、计划 :11
+同文写 11，改正使三处一致）。逐条列在 §14。**第一版不能直接开工** ——
 它会让 lit golden 烘进一张零高光的图，并让两条核心断言在饱和与顶点位置上必然失效。
 
 权威上游：[`2026-11-21-soft-raster-design.md`](2026-11-21-soft-raster-design.md)
@@ -162,7 +164,8 @@ DRY 要求（"不许出现两份逐字重复的 `N·L`"）由这层组合满足�
 - **D26（M6.3 纠正，binding）**：`shadeDiffuseOnly` / `shadeBlinnPhong` 的 `albedo` 形参是
   **未乘材质系数的基础色**（顶点色或纹素），因为函数内部就做 `kd = albedo × mat.diffuse`
   （`shading.h:86`）。**调用方再乘一次 `diffuse` 就是乘两次**。
-  D17 第一版写的是"albedo = 顶点色 × `diffuse`"，字面照做会让 `Kd 0.5` 的模型暗一档
+  D17 第一版把 albedo 写成顶点色与 `diffuse` 的乘积（调用方乘 `Kd`；错式字面按终审修复波
+  全文清扫移除，免被当成事实，M6.9 移除错值同政策），字面照做会让 `Kd 0.5` 的模型暗一档
   （`0.5² = 0.25`），而 M6.3 的 TDD 正是抓到了 `0.125 ≠ 0.25` 才发现规格的歧义。
   契约因此定在**被调方乘 `Kd`**，调用方只传基础色；M6.4 的 `texel × diffuse` 是同一个陷阱的第二次落点，
   已单独写进它的派发词。
@@ -412,14 +415,18 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
 
 ## 9. app 侧
 
-- `3` 切着色模式（`unlit → Gouraud → Phong`）⇒ `InputState.cycleShadeMode` + `win32_window.cpp` 的 `case '3'`
+- `3` 切着色模式（实现循环是 **Phong → Gouraud → Unlit**，`scene.cpp cycleShadeMode`；
+  上游 spec §7.6 回写已按此。终审修复波留痕：此处原写的是从 unlit 起步、到 Phong 收尾的
+  反序，与实现不符，改正）⇒ `InputState.cycleShadeMode` + `win32_window.cpp` 的 `case '3'`
   （那个 switch 的注释已说明数字键与字母键同族，`VK_1..VK_9` 在本机 SDK 的 `WINVER` 下不定义）。
 - **D24（裁决）**：`[` / `]` 调点光强度、`-` / `=` 调方向光强度，用**加法步进 ±0.1 并夹到 `[0, 3]`**。
   第一版写的是"±10% 一档"（乘法），那**永远到不了 0** —— 而 §6.1 明确承诺了
   "关掉点光只留方向光"是一个可到达的状态，notes 的对比图也依赖它。
   乘法步进还有一个更隐蔽的后果：从默认值出发按 N 下与按 N 上不对称，"回到默认"要靠 `0` 键而不是按回去。
-  代价：0 附近一档就是 10% 的相对变化，微调手感比乘法粗 —— 用 `0` 键复位默认来补。
-  `A` 切衰减；`0` 把两盏灯与衰减恢复到默认。
+  代价：0 附近一档就是 10% 的相对变化，微调手感比乘法粗 —— 用 `0` 键恢复启动基线来补。
+  `A` 切衰减；`0` 把两盏灯强度与衰减恢复到**启动基线**（命令行构造的 rig）。
+  （终审修复波留痕：这两行原写"复位/恢复到内置默认"，是 **R99** 之前的旧语义 ——
+  `0` 撤销的是按键调整而非命令行意图，M6.6 已按 R99 实现，此处回写改正。）
 - 命令行：`--key-color --key-dir --key-intensity --point-color --point-pos --point-intensity
   --ambient --ambient-color --attenuate --attenuate-radius --shade`，全部走 `Parser::nextFloat/nextString` 风格。
 - **默认值必须让"什么都不传"就看得见不饱和的高光带**（D19），否则 G-M6.2 与肉眼门一起失败。
@@ -458,7 +465,7 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
 | M6.0 | **叫醒休眠接口**：`makeNormalMatrix` + last-good 兜底、`worldPos` 改世界空间、变换后归一化、生产侧 identity 归零（§8.1 #1–#5、#13/#14 的前提） | 单测；两份既有 golden **逐字节不变** |
 | M6.1 | `LightRig` + `MaterialShade` + 两个 uniforms 的指针 + 光色 sRGB 解码 + `Ns` 夹取与 0 语义 + `litDefaultMaterialShade` | 单测（#6、#10、#11） |
 | M6.2 | `shading.h` 纯函数（`shadeDiffuseOnly` / `shadeBlinnPhong`）+ 解析单测 | 单测（#9、#10）——**先有可测的数学，再有 shader** |
-| M6.3 | `lambertVS` + `lambertPerVertexFS`（Gouraud，复用 `v.color` 槽，albedo = 顶点色 × diffuse） | 单测 + 窗口里能切到 |
+| M6.3 | `lambertVS` + `lambertPerVertexFS`（Gouraud，复用 `v.color` 槽，基础色取顶点色、`Kd` 由被调方乘 —— D26。终审修复波留痕：本行原把 albedo 写成顶点色与 diffuse 的乘积，与 §6.3 绑定裁决 D26 矛盾（调用方再乘就是乘两次），M6.3 修 §6.3 时漏了本表行，改正） | 单测 + 窗口里能切到 |
 | M6.4 | `blinnPhongPerPixelFS`（贴图 × Kd 的 albedo、`Ka` 环境项、衰减） | 单测（#7a 前置、#12） |
 | M6.5 | `debugNormalFS` + `V` 循环 4 视图 + FS/sink 两种机制的分界写进 `sink.h` 与注释（D23） | 窗口里 `V` 能看法线图 |
 | M6.6 | app：`3`/`[`/`]`/`-`/`=`/`A`/`0`、命令行 11 个 flag、HUD 加一行、默认参数调到不饱和 | **窗口里可调光、可切模式、看得见高光** |
@@ -493,5 +500,6 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
     lit golden 会烘进一张**零高光**的球，G-M6.2 与肉眼门一起静默失败（→ D15）。
 
 **一般规律（进 notes）**：一份设计文档里"关于既有代码的陈述"和"我提的断言"是两类不同的待验证物。
-前者靠 grep（本文已逐条核），后者靠**在真实夹具上算一遍**——第一版十条错里六条属于后者，
+前者靠 grep（本文已逐条核），后者靠**在真实夹具上算一遍**——第一版十一条错里六条属于后者
+（计数随 :6 改正，终审修复波留痕），
 而它们全都"看起来像数学常识"。

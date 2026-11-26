@@ -8,7 +8,9 @@
 
 **Tech Stack:** C++20；CMake + MSVC（主路径）/ MSYS2 g++（次路径）；自建 harness（`SR_TEST`/`SR_ASSERT`/`SR_ASSERT_NEAR`/`SR_ASSERT_EQ`）；CTest；零第三方渲染依赖。
 
-**Spec:** [`docs/superpowers/specs/2026-11-24-soft-raster-m6-lighting-design.md`](../specs/2026-11-24-soft-raster-m6-lighting-design.md) —— 裁决 **D3–D23** 全部权威（第二版已吸收 builder 评审的 11 处纠正，§14 是那份清单）。上游是 `2026-11-21-soft-raster-design.md`；前章是 `2026-11-22-soft-raster-m5-obj-design.md`（其 D5 要求 M6 做一次审视，落在本计划 Task M6.1 与 M6.9）。
+**Spec:** [`docs/superpowers/specs/2026-11-24-soft-raster-m6-lighting-design.md`](../specs/2026-11-24-soft-raster-m6-lighting-design.md) —— 裁决 **D3–D27** 全部权威（终审修复波留痕：原写的范围止于 D23，漏了同样绑定的 D24–D27 ——
+D24 加法步进在设计 §9，D25/D26 立于 M6.3 纠正，D27 立于 M6.4 派发；第二版已吸收 builder
+评审的 11 处纠正，§14 是那份清单）。上游是 `2026-11-21-soft-raster-design.md`；前章是 `2026-11-22-soft-raster-m5-obj-design.md`（其 D5 要求 M6 做一次审视，落在本计划 Task M6.1 与 M6.9）。
 
 ## Global Constraints
 
@@ -513,7 +515,9 @@ SR_TEST(stepIntensity_reaches_zero_by_repeated_presses)   // D24：乘法步进�
 
 - [ ] **Step 3: 按键**
 
-`3` → `cycleShadeMode`；`[`/`]` → 点光 ±0.1；`-`/`=` → 方向光 ±0.1；`A` → 衰减；`0` → 恢复默认。
+`3` → `cycleShadeMode`；`[`/`]` → 点光 ±0.1；`-`/`=` → 方向光 ±0.1；`A` → 衰减；`0` → 恢复启动基线。
+（P111 族留痕，终审修复波：本行原写"恢复内置默认"，与 **R99** 矛盾 —— `0` 撤销的是按键调整，
+不是命令行意图；M6.7 报告已点名留给 M6.9，那轮漏改，此处改正。现行实现见 `scene.cpp resetLights`。）
 `input.h` 加对应 bool，`win32_window.cpp` 的 switch 加 case（数字键与字母键同族那条注释已在那里）。
 
 - [ ] **Step 4: HUD 第三行（D10）**
