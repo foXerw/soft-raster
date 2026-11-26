@@ -219,6 +219,10 @@ class RenderBackend {
 理由：MTL 里的 `Kd` 与 PNG 像素是同一类东西（display-referred 的颜色值），
 不一致地处理会让"有贴图的材质比没贴图的老是偏亮"。代价：与某些引擎（把 Kd 当线性）不同，
 所以这条**必须**进 notes，并且 M6 换 shader 时要重新审视一次。
+**（M6.9 回写：M6 已做那次审视，结论见 M6 设计 D15/D19/D26，已实施——`Kd`/`Ka`/`Ks` 维持解析时
+解码、经 `MaterialShade` 单一真源送进 VS/FS 两阶段（D15）；解码一次且只一次（D19）；`albedo` 形参
+未乘 `Kd`、由被调方乘（D26，TDD 抓到 `0.125 ≠ 0.25`）。本 TODO 关闭，推导与坑见
+`docs/notes/M6-光照与休眠接口.md` ④。）**
 `Ka`/`Ks` 按 RGB 三元组解析并存进 Material（M6 要用），M5 不参与着色。
 
 ## 8. OBJ 解析规则
