@@ -1,6 +1,7 @@
 #include "app/cmdline.h"
 
 #include <charconv>
+#include <cmath>     // isfinite（D10：方向/坐标分量的有限性检查）
 #include <cstdlib>   // strtof
 #include <string>
 #include <vector>
@@ -222,6 +223,19 @@ bool parseCmdline(int argc, char** argv, AppOptions& out, std::string& err) {
                 for (int c = 0; c < 3; ++c) {
                     if (!(dst[c] >= 0.0f && dst[c] <= 1.0f)) {
                         return p.fail(std::string(a) + " 的分量必须在 [0, 1] 之间（sRGB），收到 " +
+                                      std::to_string(dst[c]));
+                    }
+                }
+            }
+            // D10（终审修复波，R103 同族）：方向/坐标不受 [0,1] 约束，但必须**有限**。
+            // strtof 接受 "nan"/"inf"；--point-pos nan 0 0 曾在解析时合法，衰减开时
+            // att=NaN ⇒ shadeDiffuseOnly 里 0 * NaN = NaN ⇒ clamp01 映成 0 ⇒ 整个 lit
+            // 模型全黑、无诊断（输出有定义，所以不是崩溃，是静默失败族）。在边界拒绝，
+            // 消息与 R100 同形：点名 flag + 允许范围 + 收到的值。
+            if (a == "--key-dir" || a == "--point-pos") {
+                for (int c = 0; c < 3; ++c) {
+                    if (!std::isfinite(dst[c])) {
+                        return p.fail(std::string(a) + " 的分量必须是有限数（拒绝 NaN/inf），收到 " +
                                       std::to_string(dst[c]));
                     }
                 }

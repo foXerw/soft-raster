@@ -599,6 +599,52 @@ SR_TEST(cmdline_light_colors_reject_out_of_range_and_nan_at_parse) {
     }
 }
 
+SR_TEST(cmdline_light_dir_and_pos_reject_non_finite_at_parse) {
+    // D10（终审修复波，R103 同族）：R103 的 NaN 守卫只给了三个颜色 flag（[0,1] 检查
+    // 顺带拒 NaN），--key-dir / --point-pos 在解析时仍接受 nan/inf（strtof 认得它们）。
+    // 后果不是崩溃而是**静默黑屏**：--point-pos nan 0 0 + 衰减开 ⇒ pointGeom 的 att=NaN，
+    // shadeDiffuseOnly 里 pointIntensity * ndl(0) * att(NaN) = NaN ⇒ clamp01 把 NaN 映成 0
+    // ⇒ 整个 lit 模型全黑、无任何诊断。方向/坐标不是颜色 ⇒ 不受 [0,1] 约束（R103 的
+    // 边界区分保留），但必须**有限**。消息与 R100 同形：点名 flag + 允许范围 + 收到的值。
+    bool ok = false;
+    std::string err;
+    {
+        Args a{{"--point-pos", "nan", "0", "0"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--point-pos") != std::string::npos);
+        SR_ASSERT(err.find("有限") != std::string::npos);
+    }
+    {
+        // inf 同样非有限：只查 NaN（v != v）的守卫会漏掉它，这条是那个变异的落点。
+        Args a{{"--key-dir", "0", "inf", "0"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--key-dir") != std::string::npos);
+    }
+    {
+        Args a{{"--key-dir", "0", "0", "-inf"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--key-dir") != std::string::npos);
+    }
+    {
+        // 第 2/3 分量也要查（不只第一个）：nan 藏在中间分量同样拒绝。
+        Args a{{"--point-pos", "1", "nan", "3"}};
+        parse(a, ok, err);
+        SR_ASSERT_FALSE(ok);
+        SR_ASSERT(err.find("--point-pos") != std::string::npos);
+    }
+    {
+        // 边界区分保留：有限的方向/坐标不受 [0,1] 约束（负数、大数都合法）。
+        Args a{{"--key-dir", "-2", "0", "0", "--point-pos", "9", "8", "7"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_NEAR(o.keyDir[0], -2.0f, 1e-6f);
+        SR_ASSERT_NEAR(o.pointPos[0], 9.0f, 1e-6f);
+    }
+}
+
 SR_TEST(cmdline_steppable_intensities_reject_above_three_at_parse) {
     // R100（P103）：--key-intensity 5 曾在解析时合法，第一次按 = 才被夹到 3 ——
     // 命令行是明确表达的意图，不许被静默改写（与 R99 同构）。>3 必须在**解析时**拒绝，
