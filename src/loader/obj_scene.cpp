@@ -22,7 +22,7 @@ void renderObjGoldenScene(const LoadedModel& m, RenderTarget& target, FrameStats
     vu.view = goldenView();
     vu.proj = goldenProjection(kGoldenWidth, kGoldenHeight);
     // 纯旋转构造上不会奇异；万一失败 setNormalMatrix 退回单位阵（last-good）并记诊断，
-    // 不黑屏（P91/M6.3：兜底块四个生产点共用一份，见 pipeline.h）。
+    // 不黑屏（P91/M6.3：兜底块各生产点共用一份，M6.8 起五个，见 pipeline.h）。
     setNormalMatrix(vu, vu.model, "obj golden ");
 
     FragmentUniforms base;
