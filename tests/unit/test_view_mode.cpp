@@ -204,33 +204,37 @@ SR_TEST(planView_routes_normal_to_an_FS_and_depth_gray_to_sinks) {
     // Ruling 67：defaultFS 传两个不同的有效值（texturedFS / flatColorFS）各一遍 ——
     // "硬编码 FS"或"抄错字段"的变异在两个值下都必须红。
     const app::ViewPlan n1 = app::planView(app::ViewMode::Normal, sr::texturedFS);
-    SR_ASSERT(n1.useFragmentShader);
+    // 覆写发生：解析后的 FS 不是传进来的 defaultFS（原覆写开关 bool=true 的语义，
+    // 终审删掉休眠 bool 后由 fragmentShader 本身承载，下一行钉住具体是哪个 FS）。
+    SR_ASSERT(n1.fragmentShader != sr::texturedFS);
     SR_ASSERT(n1.fragmentShader == sr::debugNormalFS);
     // 法线视图的 sink 必须是 Color（恒等）：再过后处理会把 (N+1)/2 编码改写掉。
     SR_ASSERT(n1.sink == sr::DebugViewSink::View::Color);
     SR_ASSERT(std::strcmp(n1.name, "NORMAL") == 0);
     const app::ViewPlan n2 = app::planView(app::ViewMode::Normal, sr::flatColorFS);
-    SR_ASSERT(n2.useFragmentShader);
+    SR_ASSERT(n2.fragmentShader != sr::flatColorFS);   // 覆写发生（原覆写开关=true 语义）
     SR_ASSERT(n2.fragmentShader == sr::debugNormalFS);   // Normal 无视 defaultFS
     SR_ASSERT(n2.sink == sr::DebugViewSink::View::Color);
 
     const app::ViewPlan d1 = app::planView(app::ViewMode::Depth, sr::texturedFS);
-    SR_ASSERT_FALSE(d1.useFragmentShader);
+    // 视图不劫持着色（原覆写开关=false 语义）：解析后的 FS 不是法线 FS；
+    // 下一行钉住"就是传进来的那个"。休眠 bool 删除后两条都由 fragmentShader 承载。
+    SR_ASSERT(d1.fragmentShader != sr::debugNormalFS);
     SR_ASSERT(d1.fragmentShader == sr::texturedFS);   // 原样透传，不是硬编码
     SR_ASSERT(d1.sink == sr::DebugViewSink::View::Depth);
     SR_ASSERT(std::strcmp(d1.name, "DEPTH") == 0);
     const app::ViewPlan d2 = app::planView(app::ViewMode::Depth, sr::flatColorFS);
-    SR_ASSERT_FALSE(d2.useFragmentShader);
+    SR_ASSERT(d2.fragmentShader != sr::debugNormalFS);   // 不覆写着色（原 false 语义）
     SR_ASSERT(d2.fragmentShader == sr::flatColorFS);
     SR_ASSERT(d2.sink == sr::DebugViewSink::View::Depth);
 
     const app::ViewPlan g1 = app::planView(app::ViewMode::Gray, sr::texturedFS);
-    SR_ASSERT_FALSE(g1.useFragmentShader);
+    SR_ASSERT(g1.fragmentShader != sr::debugNormalFS);   // 不覆写着色（原 false 语义）
     SR_ASSERT(g1.fragmentShader == sr::texturedFS);
     SR_ASSERT(g1.sink == sr::DebugViewSink::View::Gray);
     SR_ASSERT(std::strcmp(g1.name, "GRAY") == 0);
     const app::ViewPlan g2 = app::planView(app::ViewMode::Gray, sr::flatColorFS);
-    SR_ASSERT_FALSE(g2.useFragmentShader);
+    SR_ASSERT(g2.fragmentShader != sr::debugNormalFS);   // 不覆写着色（原 false 语义）
     SR_ASSERT(g2.fragmentShader == sr::flatColorFS);
     SR_ASSERT(g2.sink == sr::DebugViewSink::View::Gray);
 
@@ -243,13 +247,13 @@ SR_TEST(planView_routes_normal_to_an_FS_and_depth_gray_to_sinks) {
 
 SR_TEST(planView_falls_back_to_the_default_FS_for_color_view) {
     const app::ViewPlan c1 = app::planView(app::ViewMode::Color, sr::texturedFS);
-    SR_ASSERT_FALSE(c1.useFragmentShader);
+    SR_ASSERT(c1.fragmentShader != sr::debugNormalFS);   // 不覆写着色（原 false 语义）
     SR_ASSERT(c1.fragmentShader == sr::texturedFS);
     SR_ASSERT(c1.sink == sr::DebugViewSink::View::Color);
     SR_ASSERT(std::strcmp(c1.name, "COLOR") == 0);
     // 第二个有效值：fallback 必须是"传进来的那个"，不是写死的 texturedFS。
     const app::ViewPlan c2 = app::planView(app::ViewMode::Color, sr::flatColorFS);
-    SR_ASSERT_FALSE(c2.useFragmentShader);
+    SR_ASSERT(c2.fragmentShader != sr::debugNormalFS);   // 不覆写着色（原 false 语义）
     SR_ASSERT(c2.fragmentShader == sr::flatColorFS);
     SR_ASSERT(c2.sink == sr::DebugViewSink::View::Color);
 
@@ -283,7 +287,8 @@ SR_TEST(normal_view_wiring_encodes_the_rotated_world_normal) {
     SR_ASSERT(sr::setNormalMatrix(vu, vu.model, "test "));   // 生产帮手（P91）
 
     const app::ViewPlan plan = app::planView(app::ViewMode::Normal, sr::texturedFS);
-    SR_ASSERT(plan.useFragmentShader);
+    // 解析后的 FS 就是法线 FS（原覆写开关=true 的语义由 fragmentShader 承载）。
+    SR_ASSERT(plan.fragmentShader == sr::debugNormalFS);
 
     Canvas c{kW, kH};
     sr::FrameStats s;

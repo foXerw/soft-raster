@@ -426,6 +426,10 @@ D16 的"逐像素模式仍采样贴图"由这个 `albedo` 来源保证。
   ViewPlan planView(ViewMode mode, FragmentShaderFn defaultFS);   // src/app/view_mode.h
   bool debugNormalFS(const FragmentInput&, const FragmentUniforms&, FragmentOutput&);
   ```
+  （终审裁定留痕，修复波：上面 snippet 里的 `useFragmentShader` bool 已在 M6.9 之后删除 ——
+  P101 删掉它唯一的生产消费者（重述 planView 的多余三元）后只剩测试读它 ⇒ 休眠字段，
+  正是本章谴责的形状。`plan.fragmentShader` 本身携带"覆写与否"的真相，测试改为直接断言
+  解析后的 FS 与 sink。snippet 保留 M6.5 历史形状；现行形状见 `src/app/view_mode.h`。）
 
 - [ ] **Step 1: 写失败测试**
 

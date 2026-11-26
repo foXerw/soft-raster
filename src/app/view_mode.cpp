@@ -10,16 +10,16 @@ ViewPlan planView(ViewMode mode, sr::FragmentShaderFn defaultFS) {
         case ViewMode::Normal:
             // 法线是普通 FS 视图：覆写 FS，sink 保持 Color（恒等）——
             // 再过后处理会把 (N+1)/2 的编码改写掉（D23）。
-            return {true, sr::debugNormalFS, sr::DebugViewSink::View::Color, "NORMAL"};
+            return {sr::debugNormalFS, sr::DebugViewSink::View::Color, "NORMAL"};
         case ViewMode::Depth:
             // 深度/灰度天生是后处理：FS 不动（defaultFS 原样），帧末走对应 sink。
-            return {false, defaultFS, sr::DebugViewSink::View::Depth, "DEPTH"};
+            return {defaultFS, sr::DebugViewSink::View::Depth, "DEPTH"};
         case ViewMode::Gray:
-            return {false, defaultFS, sr::DebugViewSink::View::Gray, "GRAY"};
+            return {defaultFS, sr::DebugViewSink::View::Gray, "GRAY"};
         case ViewMode::Color:
             break;
     }
-    return {false, defaultFS, sr::DebugViewSink::View::Color, "COLOR"};
+    return {defaultFS, sr::DebugViewSink::View::Color, "COLOR"};
 }
 
 }  // namespace app

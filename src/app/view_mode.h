@@ -19,12 +19,13 @@ namespace app {
 //   后处理 sink —— 硬改成 FS 等于伪造一个不可能的接口。
 enum class ViewMode : uint8_t { Color, Depth, Gray, Normal };
 
-// useFragmentShader = true ⇒ 本次提交用 fragmentShader **覆写**默认 FS；
-// false ⇒ fragmentShader 就是传进来的 defaultFS 原样（视图不干预着色，只干预帧末 sink）。
-// Normal ⇒ {true, debugNormalFS, View::Color, "NORMAL"}：sink 保持恒等，
-// 法线视图绝不能再被后处理改写（D23）。
+// fragmentShader 是**解析后的** FS，它自己携带"覆写与否"的真相（终审裁定删掉了
+// 原来的覆写开关 bool：P101 删掉它唯一的生产消费者——重述 planView 的多余三元——之后
+// 只剩测试读它，正是本章谴责的休眠字段）。Normal ⇒ {debugNormalFS, View::Color, "NORMAL"}：
+// FS 被覆写、sink 保持恒等，法线视图绝不能再被后处理改写（D23）；
+// 其余视图 ⇒ {defaultFS 原样, 对应 sink}（视图不干预着色，只干预帧末 sink）。
+// 覆写/透传语义由测试直接断言解析后的 FS 与 sink（test_view_mode.cpp）。
 struct ViewPlan {
-    bool useFragmentShader;
     sr::FragmentShaderFn fragmentShader;
     sr::DebugViewSink::View sink;
     const char* name;   // HUD / 终端显示（ASCII：位图字体没有非 ASCII 字形）
