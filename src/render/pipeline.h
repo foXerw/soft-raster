@@ -49,7 +49,10 @@ struct VertexUniforms {
 // 画面继续，不退出也不黑屏（M5.6 同原则）。这四个点的 model 每帧恒定（单位阵或固定旋转），
 // 所以 last-good 就是单位阵本身；将来 model 逐帧变化时，last-good 状态由调用方持有。
 // siteLabel 是诊断里的场景前缀（""/"golden "/"obj golden "）：各点的 stderr 文本逐字保留。
-// 返回 makeNormalMatrix 的成败（调用方今天都不需要它，M6.6 的 HUD 要显示原因时用）。
+// 返回 makeNormalMatrix 的成败。消费者：app 的 prepareFrameUniforms（scene.cpp）把它
+// 取反记进 scene.normalMatrixDegenerate ⇒ HUD 显示 "NM DEGENERATE"（P98，M6.6 接线，
+// nm_degenerate_flag_reaches_the_hud 钉住）。三个场景调用点（golden_scene.cpp ×2、
+// obj_scene.cpp）忽略返回值：姿态是固定纯旋转，构造上不会奇异；兜底诊断本函数内部已发。
 // 兜底先赋给局部 nm 再统一写 vu.normalMatrix（与各点原样同形）：M6.9 的 grep 守卫
 // 查的是"把单位阵字面量直接赋给 normalMatrix 字段"的生产代码，零命中要求 ——
 // 单位阵字面量只许活在这一个兜底里（经局部变量转手，守卫的模式匹配不到）。

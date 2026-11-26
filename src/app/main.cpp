@@ -165,7 +165,9 @@ void renderFrame(sr::RenderTarget& target, float phase, const std::string& statu
         // M6.6：VS 跟着色模式（unlit/phong=transformVS，gouraud=lambertVS），与 FS 同一份计划。
         st.vertexShader = plan.vertexShader;
         // M4 的可见成果：贴一张程序生成的 checker。顶点色仍保留 —— Gouraud 的 lambertVS
-        // 消费它（albedo = 顶点色 × Kd，D17）；W 键看背面时"哪面哪个颜色"也仍读得出。
+        // 消费它（基础色取顶点色，Kd 由被调方乘，D17/D26）；**Gouraud 下** W 键看背面时
+        // "哪面哪个颜色"仍读得出。默认的 Phong（与 unlit）FS 不读 v.color —— 那时画面
+        // 由棋盘贴图主导，顶点色不参与（这句承诺只在 Gouraud 下成立，别读成无条件）。
         // P101：plan.fragmentShader 已是"视图覆写或着色默认 FS"，不再三元值重述 planView。
         st.fragmentShader = plan.fragmentShader;
         st.depthTest = true;
