@@ -143,4 +143,17 @@ void prepareFrameUniforms(SceneState& scene, int width, int height,
 // normalMatrixDegenerate ⇒ 追加 "NM DEGENERATE"。纯字符串组装，可单测。
 std::string shadeHudLine(const AppOptions& o, const SceneState& scene);
 
+// P110（M6.9 从 main.cpp 移入）：载入入口与光照组装本来住在 Win32 TU（main.cpp），
+// 单测够不着，"失败载入不复位光/模式"只能靠肉眼门。它们只碰 scene/load/printf/refit
+// 与 buildLightRig/parseShadeMode（全在本 TU 已有），不含 Win32 ⇒ 移进来变成可测单元。
+// 行为逐字保留（见 main.cpp 调用点），移动本身不改语义。
+bool loadObjIntoScene(SceneState& scene, const std::filesystem::path& objPath, int width,
+                      int height);
+void initSceneLighting(SceneState& scene, const AppOptions& o);
+// R/拖放共用的"重载 + 条件重应用光照"门（P103）：**只有成功载入才** initSceneLighting。
+// 失败的载入没有换模型，不得把用户步进过的光强/切过的着色模式抹回命令行值。
+// 收进一个函数让这道门可被单测钉住（此前是 main.cpp 里两处重复的 if）。
+void reloadObjScene(SceneState& scene, const AppOptions& o, const std::filesystem::path& objPath,
+                    int width, int height);
+
 }  // namespace app

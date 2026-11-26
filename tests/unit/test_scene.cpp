@@ -875,3 +875,35 @@ SR_TEST(obj_golden_nullptr_overrides_are_load_bearing_for_the_m4_anchor) {
     std::printf("[obj-override] VS override：无 rig 差 %d 像素（空转），挂 rig 差 %d 像素\n",
                 diffVacuous, diffVs);
 }
+
+SR_TEST(reload_gate_failed_load_does_not_reset_lights_or_shade_mode) {
+    // P110：门收进 app::reloadObjScene 后才能被单测钉住（此前是 main.cpp 两处重复的 if，
+    // 只能靠肉眼门）。失败载入 ⇒ 模型/光强活值/着色模式/基线全保留；成功载入 ⇒ 重应用
+    // CLI（出厂光照）并刷新基线快照。变异"去掉 if 恒 init"会让失败分支红。
+    TempDir dir("reload_gate");
+    writeText(dir.p / "a.obj", kOneTriObj);
+    app::AppOptions o;
+    o.keyIntensity = 2.0f;         // 命令行意图（R99 基线）
+    app::SceneState s;
+    s.fitEnabled = false;          // 不动相机，隔离光/模式断言
+    app::initSceneLighting(s, o);
+    SR_ASSERT_NEAR(s.rig.keyIntensity, 2.0f, 1e-6f);
+    // 用户在两次载入之间步进光强、切着色模式（活值）
+    app::stepIntensity(s.rig.keyIntensity, 0.5f);   // 2.0 → 2.5
+    s.shade = app::ShadeMode::Gouraud;
+    const auto* modelBefore = s.model.get();
+
+    // 失败载入（文件不存在）：门不得重应用 CLI
+    app::reloadObjScene(s, o, dir.p / "missing.obj", 160, 90);
+    SR_ASSERT_NEAR(s.rig.keyIntensity, 2.5f, 1e-6f);          // 步进活值保留
+    SR_ASSERT(s.shade == app::ShadeMode::Gouraud);            // 模式保留
+    SR_ASSERT(s.model.get() == modelBefore);                 // 旧模型保留
+    SR_ASSERT_NEAR(s.baselineRig.keyIntensity, 2.0f, 1e-6f);  // 基线不被改写
+
+    // 成功载入：重应用 CLI（keyIntensity 回 2）、模式回 o.shade、基线刷新
+    app::reloadObjScene(s, o, dir.p / "a.obj", 160, 90);
+    SR_ASSERT(s.model != nullptr);
+    SR_ASSERT_NEAR(s.rig.keyIntensity, 2.0f, 1e-6f);
+    SR_ASSERT(s.shade == app::parseShadeMode(o.shade));
+    SR_ASSERT_NEAR(s.baselineRig.keyIntensity, 2.0f, 1e-6f);
+}

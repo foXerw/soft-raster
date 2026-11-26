@@ -637,3 +637,25 @@ SR_TEST(cmdline_steppable_intensities_reject_above_three_at_parse) {
         SR_ASSERT_NEAR(o.ambientIntensity, 5.0f, 1e-6f);
     }
 }
+
+SR_TEST(cmdline_bench_and_frames_last_wins_in_both_orders) {
+    // P110：--bench N 设 frames=N（D21），--frames M 设 frames=M；两者都给时**后写的赢**
+    // （与 cmdline_later_flags_win 同形）。两个顺序都钉住，避免某个 flag 静默覆盖另一个。
+    bool ok; std::string err;
+    {
+        Args a{{"--bench", "60", "--frames", "3"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_EQ(o.bench, 60);
+        SR_ASSERT_EQ(o.frames, 3);   // --frames 在后 ⇒ frames=3
+        SR_ASSERT(o.offscreen);
+    }
+    {
+        Args a{{"--frames", "3", "--bench", "60"}};
+        const auto o = parse(a, ok, err);
+        SR_ASSERT(ok);
+        SR_ASSERT_EQ(o.bench, 60);
+        SR_ASSERT_EQ(o.frames, 60);  // --bench 在后 ⇒ frames=60
+        SR_ASSERT(o.offscreen);
+    }
+}
