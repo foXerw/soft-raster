@@ -272,3 +272,49 @@ SR_TEST(bench_flag_runs_the_requested_number_of_frames) {
     SR_ASSERT_EQ(o.frames, 60);   // 修复前这里是 1 ⇒ RED 在帧数
     SR_ASSERT(o.offscreen);
 }
+
+SR_TEST(stage_timers_accumulate_over_a_clipped_polygon_fan) {
+    // P109：扇形重三角化会**多次**进入 rasterOne，msSetup/msRaster 用 `+=` 累加。
+    // 立方体夹具每个输入三角形只产生一个子三角形，`=` 与 `+=` 不可区分（只有读码验证）。
+    // 这里造一个被裁成 >=5 顶点凸多边形的单三角形（>=3 个子三角形），让累加真被跑到：
+    // 若改成 `=`（覆盖），msSetup/msRaster 只记最后一个子三角形 ⇒ 四段之和远小于 msTotal
+    // ⇒ partition 比值掉到 0.5 以下 ⇒ 红。前提先断言子三角形数 >=3。
+    sr::Mesh tri;
+    tri.positions = {sr::Vec3{-10, -10, -5}, sr::Vec3{10, -10, -5}, sr::Vec3{0, 10, -5}};
+    tri.indices = {0, 1, 2};
+    tri.recomputeBounds();
+
+    Canvas c{kW, kH};
+    sr::BackendA backend;
+    auto setup = [&](sr::FrameStats& st) {
+        auto s = makeState(c, st);
+        s.vu.model = sr::Mat4::identity();
+        s.vu.view = sr::makeLookAt({0, 0, 0}, {0, 0, -1}, {0, 1, 0});
+        s.vu.proj = sr::makePerspective(1.047f, static_cast<float>(kW) / static_cast<float>(kH),
+                                        0.1f, 100.0f);
+        s.vu.normalMatrix = sr::Mat4::identity();
+        s.cull.backfaceCull = false;   // 裁剪多边形的每个子三角形都要进来
+        return s;
+    };
+
+    // 前提：一次 draw 真的产生 >=3 个被光栅化的子三角形（否则本测试对 `=` 无判别力）。
+    // 实测（MSVC Debug，本机）：该三角形被裁成 **6 顶点**凸多边形 ⇒ **4 个子三角形**、
+    // 13200 片元 ⇒ 累加路径真被跑到。夹具密度/形状是量出来的，改几何须重测这条前提。
+    sr::FrameStats count;
+    auto sc = setup(count);
+    backend.draw(tri, sc);
+    SR_ASSERT(count.trianglesRasterized >= 3);
+
+    sr::FrameStats stats;
+    auto st = setup(stats);
+    drawUntilMeasured(backend, tri, st, stats);
+    SR_ASSERT(stats.msTotal >= 2.0);
+    SR_ASSERT(stats.msVertex > 0.0);
+    SR_ASSERT(stats.msClip > 0.0);
+    SR_ASSERT(stats.msSetup > 0.0);
+    SR_ASSERT(stats.msRaster > 0.0);
+    const double sum = stats.msVertex + stats.msClip + stats.msSetup + stats.msRaster;
+    const double ratio = sum / stats.msTotal;
+    SR_ASSERT(ratio >= 0.5);   // `=` 覆盖会丢前面子三角形的段 ⇒ 比值崩 ⇒ 红
+    SR_ASSERT(ratio <= 1.05);
+}
