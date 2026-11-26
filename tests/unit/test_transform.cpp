@@ -237,8 +237,12 @@ SR_TEST(golden_scene_normal_matrix_is_no_longer_identity) {
     // 设计 §8.1 #4 / Ruling 85：grep 守卫只是绊线，真正的证明是这条 ——
     // golden 场景的法线矩阵必须**等于那个旋转本身**且**不等于 identity**。
     // M6.0 之前生产侧四处全传 identity，而 goldenModel = rotX(0.43)·rotY(0.61)
-    // 是纯旋转，其法线矩阵就是它自己。今天没有 FS 读 worldNormal，所以两份
-    // golden 逐字节不变；M6.2 起光照读到的是旋转后的法线，靠这条保证。
+    // 是纯旋转，其法线矩阵就是它自己。**本条证的是数学，不是接线**（Ruling 85/89）：
+    // 它断言 makeNormalMatrix(goldenModel()) 等于旋转，但证明不了 renderGoldenSceneLit
+    // 真的把它上传了。M6.0 当时没有 FS 读 worldNormal，故两份 golden 逐字节不变；
+    // 接线的像素级硬证明是 **M6.8** 的破坏性验证 #13（计划 M6.8 Step 5 ①：lit 场景
+    // 法线矩阵改回 identity ⇒ lit golden 红 2985 像素）。旧注释把那个落点写成 M6.2/M6.3
+    // 并说"靠这条保证"，是假跨引用（P90，R61/R68 族），M6.9 改正。
     const sr::Mat4 rot = sr::goldenModel();
     sr::Mat4 nm{};
     SR_ASSERT(sr::makeNormalMatrix(rot, nm));

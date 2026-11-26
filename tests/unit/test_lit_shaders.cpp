@@ -743,7 +743,10 @@ SR_TEST(gouraud_ignores_the_texture_and_says_so_in_the_shader_choice) {
     // 闭式期望：四边形左半 N·L=1、右半 0.5，w 全 1 ⇒ 亮度沿 x 仿射。
     // 屏幕 x：左缘 6.4、右缘 57.6（NDC ±0.8 → 64px）。像素中心 10.5 / 54.5：
     //   f(x) = 1 - 0.5*(x-6.4)/51.2 ⇒ f(10.5)=0.9599609, f(54.5)=0.5302734。
-    // 容差 0.01：8-bit sRGB 量化在 1.0 附近约 ±0.0031（线性），远小于两值之差 0.43。
+    // 容差 0.01：8-bit sRGB 量化在 1.0 附近的线性半步长 ≈ **0.0045**（P99 改正，旧值 0.0031 错）：
+    //   d(linear)/d(sRGB) = (2.4/1.055)·((s+0.055)/1.055)^1.4，s=1 时 = 2.4/1.055 ≈ 2.2749；
+    //   × 半步 0.5/255 ⇒ 2.2749/510 ≈ 0.00446。分段接缝以下导数 1/12.92 更小，故 0.0045 是全值域上界。
+    //   仍远小于两值之差 0.43，容差 0.01 的结论不变 —— 但为容差辩护的数字本身必须对（P99）。
     const sr::LinearColor left = sr::decodeSRGB(a.rt.color.readPacked(10, 32));
     const sr::LinearColor right = sr::decodeSRGB(a.rt.color.readPacked(54, 32));
     expectColorNear(left, 0.9599609f, 0.9599609f, 0.9599609f, 0.01f);
