@@ -607,7 +607,9 @@ SR_TEST(bench_flag_runs_the_requested_number_of_frames)   // 今天 --bench 60 �
 无贴图球（`makeUVSphere(1.0f, stacks, slices)`，**`slices` 取奇数** ⇒ 没有顶点正对相机，
 这是 §8.2 夹具约束第 2 条，注释必须写明原因）；姿态沿用 `goldenModel()/goldenView()/goldenProjection()`
 （**不引入 fit**，D15 判例）；`vu.lights`/`vu.mat`/`fu.lights`/`fu.mat` 指向**同一个**函数内 `static const`
-rig 与 `litDefaultMaterialShade()`；HUD 标签 `"GOLDEN M6 LIT 320X180"`（20 字符）。
+rig 与 `litDefaultMaterialShade()`；HUD 标签 `"GOLDEN M6 LIT 320X180"`（**21 字符**）。
+（M6.9 更正 P111：本行原字符数少算 1，是 brief 数错了——逐字数 6+1+2+1+3+1+7=21；
+实现期 M6.8 发现并报告，墨迹末字形到 x=127。这是本里程碑第十二处文档错误，改正留痕不静默。）
 
 - [ ] **Step 2: `--golden-write-lit` 与互斥**
 
@@ -640,7 +642,10 @@ SR_TEST(interpolation_kink_at_triangle_edges_is_stronger_under_gouraud)  // 指�
 逐个做，每个记录"红在哪条断言、差多少像素、第一个在哪里"，然后撤销：
 ① `normalMatrix` 改回 `identity` ⇒ lit golden **必须红**（本章地板）；
 ② `worldPos` 改回 `in.position` ⇒ #7c 必须红；
-③ 排除矩形沿用 M5 的 `x<110, y<12` ⇒ lit golden **必须红**（标签条 20 字符，墨迹到 x≈123）；
+③ 排除矩形沿用 M5 的 `x<110, y<12` ⇒ lit golden **必须红**（标签条 **21 字符**，墨迹到 **x=127**）；
+   （M6.9 更正 P111：原字符数与墨迹坐标是 brief 数错（少算 1 字符、墨迹实际 x=127），第十二处文档错误，留痕。另：本 ③ 已被
+   控制器裁定取代——lit 与**自己的**参考图比对，**不许**跳过任何矩形，见 M6.8 报告 §7.1；
+   改为"非 M3/M4 帧"断言 + 3a/3b 拿错参考图演示，3b 首差 (51,3) 恰落在 M5 矩形内实证抄矩形会静默漏差。）
 ④ 删掉某个 `msXxx` 的写入 ⇒ `stage_timers_partition_the_total` 必须红。
 **若 ① 不红，M6 的全部结论作废** —— 那意味着 lit golden 不依赖法线矩阵，
 说明光照走的是别的路径（例如某处仍在用视图空间技巧，反目标 A1）。

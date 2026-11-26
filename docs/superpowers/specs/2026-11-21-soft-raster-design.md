@@ -249,8 +249,15 @@ SoA 数组 + mask 语义，牺牲的正是本项目的主题。
 - 输入：鼠标拖拽/滚轮 + 键盘。按键至少包含：
   线框、各 debug 视图循环、后端 A/B 切换、线程开/关与线程数、mip 开关、采样模式、
   着色模式（unlit/Gouraud/Phong）、SSAA 档位、暂停/单步、重新 fit、截图（BMP）、OBJ 路径重载。
+  **M6 已落地的键**（M6.6，回写于 M6.9）：`3` 循环着色模式（Phong→Gouraud→Unlit）、
+  `[`/`]` 点光强度加法步进 ±0.1 夹 [0,3]、`-`/`=` 方向光强度同形、`A` 切衰减、
+  `0` 恢复**启动基线**（命令行意图，R99，非内置默认）；`V` 的 debug 视图循环扩到 4 个
+  （color→depth→gray→normal，法线走 FS、深度/灰度走 sink，D23）。光参数另有 11 个命令行 flag
+  （`--key-color/--key-dir/--key-intensity/--point-color/--point-pos/--point-intensity/--ambient/--ambient-color/--attenuate/--attenuate-radius/--shade`）。
 - 命令行：`soft-raster [--obj path] [--width N] [--height N] [--backend a|b] [--threads N] [--bench N] [--no-fit]`。
   `--bench N`：离屏渲染 N 帧并打印每帧/分阶段耗时（性能里程碑的测量入口，也顺手满足"离线出图"）。
+  **（M6.9 回写：分阶段耗时 msVertex/msClip/msSetup/msRaster 与 `--bench N` 真跑 N 帧在 M6.7 才落地
+  （D21）；此前四个 ms* 字段声明了没人写、`--bench` 不设 frames，属"休眠接口"，见 M6 notes ①。）**
 
 ### 7.7 目录结构
 
