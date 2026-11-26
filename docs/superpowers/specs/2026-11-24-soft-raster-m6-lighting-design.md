@@ -477,7 +477,7 @@ LinearColor shadeBlinnPhong(const Vec3& N, const Vec3& P, const LightRig&, const
 1. **"每个调用方都传 identity"是夸大** —— `test_pipeline_integration.cpp:25-26` 一直在正确计算 inverse-transpose。
    正确说法：正确配方活在测试里，生产侧四处全是 identity。
 2. **"四个 FS"→ 三个**（`flatColorFS`/`vertexColorFS`/`texturedFS`；debug 视图是 **sink** 不是 FS）。
-3. **`test_mat.cpp:108-132` 只覆盖 `tryInvert`**；`transposed`/`upper3x3` 在 `:136`/`:148`。
+3. **`test_mat.cpp:108 起` 只覆盖 `tryInvert`**；`transposed`/`upper3x3` 在 `:136`/`:148`。
 4. **`msVertex/msClip/msSetup/msRaster` 从未被写**，`--bench` 不设 `frames`，`runOffscreen` 还打印 M0 占位文案
    ⇒ 第一版 D8"不需要新增计时"建立在休眠字段上（→ D21，本章主题的第二次命中）。
 5. **#7 断言在真实夹具上是假的**：线性值超过 1 会被 `encodeSRGB` clamp ⇒ 两张图峰值都 255；

@@ -279,6 +279,9 @@ SR_TEST(stage_timers_accumulate_over_a_clipped_polygon_fan) {
     // 这里造一个被裁成 >=5 顶点凸多边形的单三角形（>=3 个子三角形），让累加真被跑到：
     // 若改成 `=`（覆盖），msSetup/msRaster 只记最后一个子三角形 ⇒ 四段之和远小于 msTotal
     // ⇒ partition 比值掉到 0.5 以下 ⇒ 红。前提先断言子三角形数 >=3。
+    // 判别力主要在 msRaster（占 ~99%）：实测**只**把 msSetup 一处改 `=` 比值不崩（setup 份额
+    // 仅 ~3.5%，丢前面子三角形的 setup 不足以跌破 0.5）；把 msRaster（或两处）改 `=` 才崩。
+    // 真实的"+= 改 ="重构触两处，被杀；单改 msSetup 不红是份额使然，不是测试漏（M6.9 评审 Minor 3 补注）。
     sr::Mesh tri;
     tri.positions = {sr::Vec3{-10, -10, -5}, sr::Vec3{10, -10, -5}, sr::Vec3{0, 10, -5}};
     tri.indices = {0, 1, 2};
