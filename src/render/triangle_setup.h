@@ -74,7 +74,7 @@ struct TriangleSetup {
     // 那种错误信息对读者毫无帮助。数据成员 + 一次赋值，换来清晰的错误。
     float area2 = 0.0f;
     Rect extent;
-    bool backFacing = false;   // top-down 里 CW 为负 ⇒ 正面积就是背面
+    bool backFacing = false;   // y-down 里 area2 < 0 是正面 ⇒ 正面积就是背面
 };
 
 // 判定顺序是接口的一部分（测试 setup_rejects_degenerate_before_testing_facing 守住它）：

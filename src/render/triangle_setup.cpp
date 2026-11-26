@@ -43,9 +43,9 @@ bool setupTriangle(const ScreenVertex in[3], const ColorTarget& color, const Cul
     out.area2 = out.geom.area2;
     out.extent = out.geom.extent;
 
-    // 3) 朝向。top-down 屏幕空间里 CW（正面）的有向面积为负，所以：
+    // 3) 朝向。y-down 屏幕空间里正面满足 **area2 < 0**，所以：
     //      frontFaceIsClockwise == true  ⇒ area2 > 0 是背面
-    //    绕向与 y 翻转是耦合的：View 阶段的 y 翻转（C8）把 NDC 的 CCW 变成了屏幕空间的 CW。
+    //    绕向与 y 翻转是耦合的，但翻转只改有向面积的符号，不改肉眼旋向（M2 notes §3a 已更正）。
     out.backFacing = cull.frontFaceIsClockwise ? (out.area2 > 0.0f) : (out.area2 < 0.0f);
     if (cull.backfaceCull && out.backFacing) {
         result.reason = RejectReason::Backface;

@@ -106,7 +106,7 @@ using FragmentShaderFn = bool (*)(const FragmentInput&, const FragmentUniforms&,
 
 struct CullState {
     bool backfaceCull = true;
-    // top-down 屏幕空间里正面是 CW（NDC 的 CCW 经过 y 翻转）。见 Task 2.4 的测试。
+    // 判据是有向面积的符号：y 翻转后 **area2 < 0 是正面**。别读成"正面视觉上是 CW"（M2 的旧错词）。
     bool frontFaceIsClockwise = true;
 };
 
