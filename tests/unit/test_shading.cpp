@@ -276,11 +276,16 @@ SR_TEST(shading_shininess_is_clamped_before_the_pow) {
     // 绝对期望钉住夹取目标**就是 4096**（只断言 big==cap 的话，两边同夹到 1024 也绿）。
     // C1′ 实测常数：MSVC 19.40.33812.0 Debug 实测 0.232349962（float 路径 N·H = 0.999899983，
     // 0.35 × pow(0.999899983, 4096)）；MSYS2 g++ 16.1.0 同值（9 位内）。
-    // 容差 1e-6（≈4e-6 相对）：两侧 pow 差 <1e-9；不夹取 ⇒ ~0（差 0.232）、夹到 1024 ⇒ 0.316
-    // （差 0.084），都远大于容差。注意 float 的 0.9999 与 double 差 ~1.7e-8，经 4096 次幂
-    // 放大成 ~1.6e-5 的值差（实测 0.232349962 vs double 解析 0.232365757）——
-    // 所以期望必须取 float 路径的实测值，不能用 double 解析值。
-    expectColorNear(big, 0.232349962f, 0.232349962f, 0.232349962f, 1e-6f);
+    // 容差 **1e-4**（P94 放宽，旧 1e-6）：1e-6 只允许 ndh 抖动 ~1e-9 ≈ 1/60 个 float ulp，
+    // 等于要求上游 normalize/sqrt/dot **逐位相同**（d(pow)/d(ndh) ≈ 4096·ndh^4095 ≈ 2720，
+    // 1e-6/2720 ≈ 3.7e-10）；两侧今天都过只因为都跑 -ffp-contract=off，一旦 Release 带 FMA
+    // 收缩、ndh 差 1 ulp（~6e-8）⇒ 值差 ~1.6e-4 ⇒ 红。放宽到 1e-4 去掉位稳定性前提，
+    // 且**仍杀得住表里每个变异**（M6.9 重跑验证）：不夹取 ⇒ ~0（差 0.232 = 2320×）、
+    // 夹到 1024 ⇒ 0.316（差 0.084 = 840×）、Ns×2 ⇒ 0.154（差 0.078 = **780×**，最坏余量）。
+    // 注意 float 的 0.9999 与 double 差 ~1.7e-8，经 4096 次幂放大成 ~1.6e-5 的值差
+    // （实测 0.232349962 vs double 解析 0.232365757）—— 期望仍取 float 路径实测值；
+    // 1e-4 下 double 解析值也落在容差内，但实测常数才是"夹到 4096"的锚。
+    expectColorNear(big, 0.232349962f, 0.232349962f, 0.232349962f, 1e-4f);
 
     // 下界：Ns = 0.5 夹到 1。N·H = 0.5（N 与 H 成 60°）：0.5^0.5 ≈ 0.707 ≠ 0.5^1。
     const Vec3 Nlo{std::sqrt(3.0f) / 2.0f, 0.5f, 0.0f};
@@ -319,4 +324,101 @@ SR_TEST(shading_degenerate_normal_falls_back_to_ambient_not_black_or_nan) {
     expectColorNear(d, 0.15f, 0.08f, 0.03f, 1e-6f);
     expectColorNear(full, 0.15f, 0.08f, 0.03f, 1e-6f);
     SR_ASSERT(full.r > 0.0f);                  // 暗面不是黑洞
+}
+
+// P95：点光的背光闸门必须**独立**可杀。Step 2 的夹具里点光在正下方（L_point=(0,-1,0)），
+// 与 V=(0,1,0) 相加为 0 ⇒ H=0 ⇒ ndh=0，第二道守卫把"删掉点光背光门"的变异盖住了 ——
+// 那条夹具只经由**方向光**杀闸门。这里给点光镜像一份 120° 几何：N·L_point<0（背光）
+// 但 N·H>0（第二道守卫不生效），于是删点光背光门必漏高光。
+SR_TEST(shading_point_light_backface_gate_is_independent_of_the_key_light) {
+    LightRig rig = baseRig();
+    rig.keyIntensity = 0.0f;                   // 关方向光：只留点光，闸门归属不含糊
+    // L_point = (√3/2,-1/2,0)：与 N=(0,1,0) 成 120° ⇒ N·L = -0.5 < 0（背光，非正相反）。
+    rig.pointPosWorld = {5.0f * std::sqrt(3.0f) / 2.0f, -2.5f, 0.0f};   // = P + 5·L_point
+    rig.pointIntensity = 0.8f;
+    rig.eyeWorld = {0.0f, 1.0f, 0.0f};         // V = (0,1,0)
+    rig.ambient = {0.0f, 0.0f, 0.0f};
+    MaterialShade mat = baseMat();
+    mat.specular = {0.4f, 0.4f, 0.4f};
+    mat.shininess = 1.0f;                      // 无闸门时漏 spec = 0.4×0.8×0.5 = 0.16
+    const LinearColor albedo{1.0f, 1.0f, 1.0f};
+    const Vec3 N{0.0f, 1.0f, 0.0f};
+    const Vec3 P{0.0f, 0.0f, 0.0f};
+
+    // 前提：背光（ndl<0）但半向量仍朝向表面（ndh>0）—— 第二道守卫不该在这里生效。
+    const Vec3 L = sr::normalize(rig.pointPosWorld - P);
+    const Vec3 V = sr::normalize(rig.eyeWorld - P);
+    const Vec3 H = sr::normalize(L + V);
+    SR_ASSERT_NEAR(sr::dot(N, L), -0.5f, 1e-5f);
+    SR_ASSERT(sr::dot(N, H) > 0.1f);           // ≈0.5：删背光门就会漏出高光
+
+    const LinearColor d = sr::shadeDiffuseOnly(N, P, rig, mat, albedo);
+    const LinearColor full = sr::shadeBlinnPhong(N, P, rig, mat, albedo);
+    expectColorNear(d, 0.0f, 0.0f, 0.0f, 1e-6f);
+    expectColorNear(full, 0.0f, 0.0f, 0.0f, 1e-6f);   // 背光门挡住点光高光
+}
+
+// P96(a+b)：两条"读码安全但无断言"的退化路径 —— eye==P（V 为零）与 L+V=0 且已照亮（H 为零）。
+// 钉住它们有限、且等于闭式值，而不是 NaN/inf/黑洞。
+SR_TEST(shading_degenerate_eye_at_surface_and_zero_half_vector_stay_finite) {
+    const LinearColor albedo{1.0f, 1.0f, 1.0f};
+    const Vec3 N{0.0f, 1.0f, 0.0f};
+    const Vec3 P{0.0f, 0.0f, 0.0f};
+    MaterialShade mat = baseMat();
+    mat.specular = {0.35f, 0.35f, 0.35f};
+    mat.shininess = 64.0f;
+
+    // (a) eye == P ⇒ V = normalize(0) = 0（零向量约定）⇒ H = normalize(L+0) = L ⇒ N·H = N·L = 1。
+    // P 取**非零**点：若 P=原点，"V=normalize(eyeWorld)（丢 -P）"的变异也得 normalize(0)=0，
+    // 与本路径不可区分（M6.9 变异验证抓到的夹具盲区）。非零 P 才能让丢 -P 的变异红。
+    const Vec3 Pa{1.0f, 2.0f, 3.0f};
+    LightRig rigA = baseRig();                 // L_key=(0,1,0)，点光关，ambient 0
+    rigA.eyeWorld = Pa;                        // eye 与表面点重合
+    const Vec3 Va = sr::normalize(rigA.eyeWorld - Pa);
+    SR_ASSERT(Va.x == 0.0f && Va.y == 0.0f && Va.z == 0.0f);   // 前提：V 确实退化
+    const LinearColor a = sr::shadeBlinnPhong(N, Pa, rigA, mat, albedo);
+    expectNotNaN(a.r); expectNotNaN(a.g); expectNotNaN(a.b);
+    // diffuse 1 + spec 0.35×pow(1,64)=0.35 ⇒ 1.35（H=L 仍良定，不是 NaN）
+    expectColorNear(a, 1.35f, 1.35f, 1.35f, 1e-6f);
+
+    // (b) L+V = 0 且**已照亮**（N·L=1>0）⇒ H = normalize(0) = 0 ⇒ ndh=0 ⇒ 高光 0，只剩漫反射。
+    LightRig rigB = baseRig();
+    rigB.eyeWorld = {0.0f, -5.0f, 0.0f};       // V=(0,-1,0) = -L
+    const Vec3 Lb = -rigB.keyDirWorld;
+    const Vec3 Vb = sr::normalize(rigB.eyeWorld - P);
+    const Vec3 sum = Lb + Vb;
+    SR_ASSERT(sum.x == 0.0f && sum.y == 0.0f && sum.z == 0.0f);   // 前提：L+V 确实为 0
+    SR_ASSERT(sr::dot(N, Lb) > 0.0f);                            // 且确实被照亮
+    const LinearColor b = sr::shadeBlinnPhong(N, P, rigB, mat, albedo);
+    expectNotNaN(b.r); expectNotNaN(b.g); expectNotNaN(b.b);
+    expectColorNear(b, 1.0f, 1.0f, 1.0f, 1e-6f);   // 只有漫反射，高光被 ndh 门挡掉
+}
+
+// P96(c)：极小 attenuateRadius ⇒ (d/r)² 上溢到 inf ⇒ att = 1/(1+inf) = 0，必须有限（0），不是 NaN。
+SR_TEST(shading_tiny_attenuate_radius_does_not_produce_nan_or_inf) {
+    LightRig rig = baseRig();
+    rig.keyIntensity = 0.0f;
+    rig.pointPosWorld = {0.0f, 8.0f, 0.0f};
+    rig.pointIntensity = 1.0f;
+    rig.attenuate = true;
+    rig.attenuateRadius = 1e-20f;              // d=10 ⇒ t=1e21 ⇒ t*t=inf ⇒ att=0
+    MaterialShade mat = baseMat();
+    const LinearColor albedo{1.0f, 1.0f, 1.0f};
+    const Vec3 N{0.0f, 1.0f, 0.0f};
+    const Vec3 P{0.0f, -2.0f, 0.0f};           // d = 10，L=(0,1,0)=N ⇒ ndl=1
+    const LinearColor c = sr::shadeBlinnPhong(N, P, rig, mat, albedo);
+    expectNotNaN(c.r); expectNotNaN(c.g); expectNotNaN(c.b);
+    SR_ASSERT(std::isfinite(c.r));
+    expectColorNear(c, 0.0f, 0.0f, 0.0f, 1e-6f);   // att 上溢 ⇒ 0，有限而非 NaN
+    SR_ASSERT(c.r >= 0.0f);
+
+    // 温和极小半径：t=1e4 ⇒ t²=1e8（有限）⇒ att=1/(1+1e8)≈1e-8。这条才区分"平方丢没丢"：
+    // 上溢那条 att≈0 对 1/(1+t) 与 1/(1+t²) 都≈0（不可区分，M6.9 变异验证抓到）；
+    // 这里 1/(1+t)=1e-4 与 1/(1+t²)=1e-8 差 4 个数量级， tight 容差必红丢平方的变异。
+    rig.attenuateRadius = 1e-3f;
+    const LinearColor m = sr::shadeBlinnPhong(N, P, rig, mat, albedo);
+    expectNotNaN(m.r);
+    SR_ASSERT(std::isfinite(m.r));
+    expectColorNear(m, 1e-8f, 1e-8f, 1e-8f, 1e-10f);
+    SR_ASSERT(m.r > 0.0f);
 }
