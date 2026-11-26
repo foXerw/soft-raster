@@ -186,6 +186,9 @@ void renderGoldenSceneLit(RenderTarget& target, FrameStats* stats) {
     // 法线矩阵 = 该旋转本身（纯旋转的逆转置 = 自身）。**lit golden 真的消费它**：
     // blinnPhongPerPixelFS 读插值后的 worldNormal —— §8.3 #13（改回 identity 必红）
     // 是本章的地板。兜底走 setNormalMatrix 单一实现（P91）。
+    // 能力边界（notes ②/补记）：姿态纯旋转 ⇒ normalMatrix == mat3(model) 数值相等，
+    // #13 证"法线被消费、旋转有意义"，不证 inverse-transpose 机器本身（那由
+    // test_transform 的非均匀缩放测试钉住）。
     setNormalMatrix(st.vu, st.vu.model, "golden lit ");
     // C5：rig 与材质都是函数内 static const 单例，两个阶段挂**同一个**对象
     //（Ruling 97 同形）；量化断言的夹具也取同一个 goldenLitRig() ⇒ 不会各自漂。

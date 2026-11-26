@@ -64,6 +64,17 @@ void renderGoldenSceneTextured(RenderTarget& target, FrameStats* stats);
 // 不是展示画质（本文件开头）——轮廓略多边形化是有意取舍。
 inline constexpr int kGoldenLitStacks = 12;
 inline constexpr int kGoldenLitSlices = 15;   // 奇数（见上）
+// 编译时钉住"没有顶点正对眼/点光"前提（终审修复波 D11）：θ=π/2 落在顶点 j=slices/4
+// 上要求 4|slices —— 偶数且被 4 整除的 slices（如 24）让一个顶点恰好正对眼，Gouraud
+// 在顶点直接采到 N·H=1 的峰，凸组合上界就是峰本身，#7b 的"摊开 vs 收紧"退化成空转。
+// 奇数是比 slices%4!=0 更强、更简单的不变量，取它。注意**奇偶不是唯一前提**：M6.8
+// 实测 24/31（slices=31 是奇数）也塌过 #7b（半高宽 10 vs 10）——那是密度效应（三角形
+// 比 Ns=64 的高光带还小），由上面的实测密度区间与 test_golden_lit 的阈值钉住；
+// 本 static_assert 只钉奇偶这一半。改密度必须重测分离度（见上）。
+static_assert(kGoldenLitSlices % 2 == 1,
+              "kGoldenLitSlices must be odd: slices divisible by 4 put a vertex facing the "
+              "eye/point light, collapsing #7b's smear-vs-tight comparison (M6.8 measured "
+              "24/31 degenerating it via the separate density premise)");
 
 // lit golden 的 rig：函数内 static const，**进程内单例**（C5；M4"窗口与 golden
 // 共用同一张贴图"的原则对 rig 同样适用）。vu.lights/fu.lights 与量化断言的夹具
