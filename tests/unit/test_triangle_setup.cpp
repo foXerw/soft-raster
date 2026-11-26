@@ -96,8 +96,10 @@ SR_TEST(culling_accepts_exactly_the_faces_whose_normals_face_the_camera) {
         return n;
     };
 
-    // 正对姿态：只有 +Z 那个面（2 个三角形）朝向相机，4 个侧面是**正好棱对**（dot == 0，
-    // 既不算朝向也不算背向）。这条顺便解释了为什么正对姿态下 Setup 会把 8 个三角形判成退化。
+    // 正对姿态：只有 +Z 那个面（2 个三角形）朝向相机。4 个侧面在这里**不是棱对**——
+    // eye=(0,0,5) 时它们的 dot = -1（-Z 面是 -6），所以是实打实的背对，退化数为 0。
+    // （旧注释说侧面"正好棱对、故 8 个退化"，那是正交投影的直觉，透视下不成立；
+    //  见 docs/notes/M2-几何阶段.md 的撤回与 test_pipeline_integration.cpp 的实测。）
     SR_ASSERT_EQ(facingTriangles(sr::Mat4::identity()), 2);
 
     // 一般姿态：3 个面朝向相机 ⇒ 6 个三角形。这才是"恰好一半"的来源，

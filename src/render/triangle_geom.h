@@ -74,7 +74,9 @@ inline bool buildTriangleGeometry(const Vec2 in[3], int targetWidth, int targetH
 
 // 逐像素回调。模板而不是 std::function：内层每个像素都要调用一次，
 // 任何间接派发都会让编译器无法内联（设计文档 C5），而这里正是 M9 要 SIMD 的那一段。
-// 返回值 = 通过覆盖判定的像素数（含被目标边界丢弃的那些）。
+// 返回值 = 通过覆盖判定的像素数，也就是 paint 被调用的次数：
+// extent 在第 66 行已经 clampedTo(target) 过，循环里不会再有"越界被丢"的像素。
+// （旧版本这里写着"含被目标边界丢弃的那些"——那要求循环内还有一次边界判定，代码里没有。）
 template <class Fn>
 inline int forEachCoveredPixel(const TriangleGeom& g, Fn&& paint) {
     int covered = 0;

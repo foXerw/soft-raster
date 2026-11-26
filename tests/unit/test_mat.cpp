@@ -131,6 +131,24 @@ SR_TEST(mat4_tryInvert_rejects_singular_and_leaves_output_untouched) {
     sr::Mat4 out2 = sr::Mat4::identity();
     SR_ASSERT_FALSE(sr::Mat4::tryInvert(zeroRow, out2));
     expectNearMatrix(out2, sr::Mat4::identity(), 0.0f);
+
+    // 大坐标端：毫米尺度下的压扁阵，det = 1.0（> 固定阈值 1e-8）但条件数 1e9，必须拒绝——
+    // 这条是"eps 改成固定 1e-8"这个变异的杀手（mat.h:161-167 的注释就是这个实测）。
+    const sr::Mat4 squashedMm = sr::Mat4::scale({1e3f, 1e3f, 1e-6f});
+    sr::Mat4 outSq = sr::Mat4::identity();
+    SR_ASSERT_FALSE(sr::Mat4::tryInvert(squashedMm, outSq));
+    expectNearMatrix(outSq, sr::Mat4::identity(), 0.0f);
+
+    // 小坐标端的**已知边界**（不是期望行为，是把边界钉住，见 mat.h 注释与账本 M7 残留）：
+    // maxAbs 至少是 m[3][3] 的那个 1，所以阈值在小坐标端退化成固定 1e-8，
+    // 悬崖就落在 s³ = 1e-8 即 s ≈ 2.154e-3。实测 s=3e-3 可逆、s=1e-3 被拒。
+    // 谁将来改成按 3x3 块的量级算 maxAbs，这两条会红——那是有意的变更该付的价格。
+    sr::Mat4 outOk = sr::Mat4::identity();
+    SR_ASSERT(sr::Mat4::tryInvert(sr::Mat4::scale({3e-3f, 3e-3f, 3e-3f}), outOk));
+    expectNearMatrix(sr::Mat4::scale({3e-3f, 3e-3f, 3e-3f}) * outOk, sr::Mat4::identity(), 1e-3f);
+    sr::Mat4 outTiny = sr::Mat4::identity();
+    SR_ASSERT_FALSE(sr::Mat4::tryInvert(sr::Mat4::scale({1e-3f, 1e-3f, 1e-3f}), outTiny));
+    expectNearMatrix(outTiny, sr::Mat4::identity(), 0.0f);
 }
 
 SR_TEST(mat4_transposed_is_element_mirror) {

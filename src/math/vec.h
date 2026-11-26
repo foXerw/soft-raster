@@ -37,7 +37,9 @@ inline float dot(const Vec2& a, const Vec2& b) { return a.x * b.x + a.y * b.y; }
 
 // 二维"叉积"返回标量 = 3D 叉积的 z 分量。
 // 符号就是"点在有向边的哪一侧"，这是 EdgeFunc 的全部基础：
-// 在 y 朝下的 top-down 屏幕空间里，取 n = {e.y, -e.x} 会让三角形内部为正。
+// 在 y 朝下的 top-down 屏幕空间里，内侧法线是 n = {-e.y, e.x}（实现见 plane_eq.h:52，
+// 验证例见 plane_eq.h:32-34）。{e.y, -e.x} 是教科书 y 朝上的写法，符号正好相反 ——
+// 抄错的症状是"整个三角形一个像素都不画"。
 inline float cross(const Vec2& a, const Vec2& b) { return a.x * b.y - a.y * b.x; }
 
 // ---- Vec3 ----------------------------------------------------------------

@@ -158,8 +158,15 @@ inline bool Mat4::tryInvert(const Mat4& in, Mat4& out) {
     const float det = in.m[0][0] * cof[0][0] + in.m[0][1] * cof[0][1] + in.m[0][2] * cof[0][2] +
                       in.m[0][3] * cof[0][3];
 
-    // 阈值取相对量级而不是固定 1e-8：模型单位可能是毫米（坐标上千）也可能是米（坐标个位数），
-    // 固定阈值在毫米模型上会把"其实可逆"的矩阵判成奇异。
+    // 阈值取相对量级而不是固定 1e-8：det 随单位的三次方缩放，固定阈值于是跟着单位走。
+    // 实测（float）：scale(1e3,1e3,1e-6) 的 det = 1.0 > 1e-8，而它的条件数是 1e9——
+    // 固定阈值会放这种"数学上可逆、数值上不该求逆"的阵过去；1e-8·maxAbs³ = 10 把它拒掉。
+    // 这条由 test_mat.cpp 的 mat4_tryInvert_rejects_singular_and_leaves_output_untouched 钉住。
+    //
+    // 反向的边界也要写清楚，别把"相对阈值"读成"与单位无关"：maxAbs 至少是 m[3][3] 的那个 1，
+    // 所以小坐标端阈值退化回 1e-8，悬崖落在 s³ = 1e-8 即 s ≈ 2.154e-3——
+    // 均匀缩到千分之一以下的合法模型会被判奇异（实测 scale(3e-3) 可逆、scale(1e-3) 被拒）。
+    // makeNormalMatrix 也在这条悬崖下面，因为它复用同一个阈值（transform.h:63-64 讲的就是这个量级污染）。
     float maxAbs = 0.0f;
     for (int i = 0; i < 4; ++i)
         for (int j = 0; j < 4; ++j) maxAbs = (std::fabs(in.m[i][j]) > maxAbs) ? std::fabs(in.m[i][j]) : maxAbs;

@@ -107,7 +107,7 @@ SR_TEST(rotated_cube_submits_culls_and_rasterizes_the_expected_counts) {
     SR_ASSERT_EQ(stats3.trianglesRasterized, 12);
 }
 
-SR_TEST(axis_aligned_cube_reports_edge_on_faces_as_degenerate_not_backfacing) {
+SR_TEST(axis_aligned_cube_reports_side_faces_as_backfacing_not_degenerate) {
     // 正对姿态下只有 +Z 面朝向相机（2 个三角形），其余 5 个面的外法线都背离相机
     // （4 个侧面的 dot 是 -1 而不是 0 —— 它们不是"棱对"，是"背对"；
     //  第一版以为侧面是棱对、会走 Degenerate，那是正交投影的直觉，透视下不成立）。
