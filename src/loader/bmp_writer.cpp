@@ -12,8 +12,8 @@ namespace {
 constexpr uint32_t kHeaderSize = 54;
 constexpr uint32_t kInfoHeaderSize = 40;
 constexpr uint32_t kBitsPerPixel = 24;
-// 96 DPI。BMP 的分辨率字段只影响"打印时多大"，对我们毫无意义，但填 0 会让某些
-// 看图软件把图片当成损坏，所以按最常见的 96 写。
+// 72 DPI：2835 像素/米 × 0.0254 米/英寸 = 71.99。分辨率字段只影响"打印时多大"，对我们毫无意义，
+// 但填 0 会让某些看图软件认为文件损坏，所以要写一个真值。（旧注释说"按最常见的 96"，与实现不符。）
 constexpr int32_t kPixelsPerMeter = 2835;
 
 inline void putLE16(std::vector<uint8_t>& out, uint16_t v) {

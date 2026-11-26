@@ -56,8 +56,8 @@ SR_TEST(front_facing_triangles_have_negative_signed_area_in_top_down_pixels) {
     //   1. Mesh 生成器约定：从物体外面看是逆时针（右手系，世界空间）。
     //   2. view*proj 保持这个手性进入 NDC（y 朝上）：正面三角形的 shoelace 叉积为正。
     //   3. Viewport 把 y 翻成 top-down（C8）⇒ 叉积符号翻转。
-    //   4. 所以：**屏幕空间里 area2 < 0 的是正面**。这就是 GPU 文档在 y 朝下的帧缓冲里说
-    //      "clockwise" 所指的那个三角形。
+    //   4. 所以：**屏幕空间里 area2 < 0 的是正面**。注意 y 翻转只翻有向面积的**符号**，不翻肉眼旋向：
+    //      正面在屏幕上仍是**逆**时针（旧版此处写"这就是 GPU 文档说的 clockwise"，178e9db 实测更正）。
     Canvas c{16, 16};
     const sr::ScreenVertex front[3] = {makeSV(0, 0, 0.5f, 1, varyingsWithColor(1)),
                                        makeSV(0, 10, 0.5f, 1, varyingsWithColor(0)),

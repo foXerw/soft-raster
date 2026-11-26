@@ -51,8 +51,8 @@ SR_TEST(plane_eq_on_a_nan_triangle_is_degenerate_not_nan) {
 }
 
 SR_TEST(edge_function_is_positive_inside_for_a_clockwise_triangle) {
-    // top-down 屏幕空间里正面是 CW（见 Task 2.4 的绕向约定），
-    // 边向量取"顺时针法线" n = {e.y, -e.x} 后，三角形内部恒为正。
+    // 这个夹具 (0,0)-(10,0)-(0,10) 视觉上顺时针 ⇒ area2 > 0 ⇒ 按 triangle_setup.cpp:49 它是**背面**；
+    // 但边函数与正反面无关：fromEdge 默认 n = {-e.y, e.x}（plane_eq.h:52）让这个绕向的内部恒为正。
     const Vec2 v0{0, 0}, v1{10, 0}, v2{0, 10};      // 视觉上顺时针（y 朝下）
     const EdgeFunc e01 = EdgeFunc::fromEdge(v0, v1);
     const EdgeFunc e12 = EdgeFunc::fromEdge(v1, v2);
