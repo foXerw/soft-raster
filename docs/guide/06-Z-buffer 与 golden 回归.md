@@ -14,7 +14,7 @@
 | 约定 | 代码 | 反了的症状 |
 |---|---|---|
 | 非 reverse-Z：`ndcZ*0.5+0.5`，[−1,1]→[0,1]，**近小远大** | `src/render/viewport.cpp:15` | 所有遮挡反过来 |
-| clear 到 **1.0**（最远），float32 | `render_target.h:44` | 清成 0 ⇒ 首个片段之后全被拒 |
+| clear 到 **1.0**（最远），float32 | `render_target.h:44` | 清成 0 ⇒ 判据变成 `depth ≤ 0`，连**首个**片段都被拒（画面近乎全空） |
 | 比较用 **`<=`** | `src/render/render_backend.cpp:95` | 共面平局换赢家（见下） |
 
 深度值是非线性 `z/w`（近高远密）；方向由 `depth_values_are_written_and_monotonic_with_distance` 钉住：近处中心 <
@@ -173,7 +173,7 @@ written 少，可能没覆盖、可能被深度拒、可能被 FS 丢——**比
 
 我实测（MSVC 直接编译生产源码）：M4 今天生成 vs 参考 **md5 同为 `1f767a114a49d38c454448eec4465d51`**；M3 ±1 绿、
 精确差 **2 字节各 −1**（`cmp -l` 偏移 64925/91699，与 README 记录一致）——参考图停在 `3f8cc2a`，之后
-src/render+src/scene 变了 12 个提交而图没重生成。**拿 md5 当 M3 门禁会误判自己的重构**；"只改 1/255"的回归在 M3
+src/render+src/scene 又变了 **38** 个提交而图没重生成（HEAD 实测；复跑 `git rev-list --count 3f8cc2a..HEAD -- src/render src/scene`，只会变大）。**拿 md5 当 M3 门禁会误判自己的重构**；"只改 1/255"的回归在 M3
 上抓不住——弱一档门禁的诚实代价。
 
 **抵消不是逐字节精确的（Ruling 77）**：M5 同时删掉 OBJ 的 `v=1-v` 与 TGA 的 origin 翻转，画面肉眼正确，锚 3 仍红
@@ -348,7 +348,7 @@ golden 不走的路。③下锚 3 的红是舍入残差，**不可依赖**——
 
 1. **一次 abort 的运行不算变异验证的证据**（M5 账本 **Ruling 57**，M5.2）：负索引夹具让错解落表外，OOB 读发生在
    任何断言之前 ⇒ MSVC Debug STL abort，拿不到"红了哪几条"。改成错解落表内的夹具（4v/2vt + `f 1/-3`）⇒ 干净断言级红
-   （M5 notes §2）。
+   （这段裁定只活在账本 Ruling 57 原文里，M5 notes 未记——账本不在 git 里，见本系列反复提的那条风险）。
 2. **变异必须被展示为真的红过**：M3 §6 删 y 翻转→红→恢复→绿（片段 2 复现）。推论是 **Ruling 107**（M6 账本）：
    每条"已验证"都必须能在仓库或 build/ 找到原始输出；把没跑过的验证写成跑过并通过，是本章一直在防的那件事的完成形态。
 3. **夹具在目标错误下不变，就抓不住那个错误**：`nearer_triangle_wins` 第一版远先画，`fragmentsDepthRejected` 恒 0
