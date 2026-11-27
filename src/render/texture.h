@@ -29,8 +29,8 @@ struct Texture {
     std::vector<ImageRGBA8> levels;
 
     // true = 字节是 **sRGB 编码的颜色数据**（PNG/JPG/TGA 存的都是这个），采样时解码到线性空间。
-    // false = 字节是**数据**（uv 调试图、M6 之后的法线贴图），解码会把 0.5 变成 0.73，
-    // 于是"uv 视图"不再是 uv 视图。这就是 GPU 区分 SRGB8_ALPHA8 与 RGBA8 的理由。
+    // false = 字节是**数据**（uv 调试图、M6 之后的法线贴图），解码会把 0.5 变成 0.214（decode 方向；
+    // 0.73 是**编码**方向即 encode(0.5)=0.7354→188，别混），于是"uv 视图"不再是 uv 视图。这就是 GPU 区分 SRGB8_ALPHA8 与 RGBA8 的理由。
     bool srgb = true;
 
 #ifndef NDEBUG
