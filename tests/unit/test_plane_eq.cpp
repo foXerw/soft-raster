@@ -29,8 +29,8 @@ SR_TEST(plane_eq_is_affine_so_the_centroid_is_the_average) {
 }
 
 SR_TEST(plane_eq_on_a_degenerate_triangle_is_reported_not_solved) {
-    // 共线三点无法确定一个平面。约定：返回 false 语义由调用方处理，
-    // 这里用 isDegenerate 显式表达，而不是让 n0/n1 变成 inf。
+    // 共线三点无法确定一个平面。约定：不给"勉强算出来"的值，而是置 PlaneEq 的 `degenerate` 标志
+    // （plane_eq.h:95-98），由调用方决定怎么处理——而不是让 n0/n1 变成 inf。（旧注释写作 isDegenerate。）
     const Vec2 a{0, 0}, b{2, 2}, c{4, 4};
     const PlaneEq f = PlaneEq::fromTriangle(a, 1.0f, b, 2.0f, c, 3.0f);
     SR_ASSERT(f.degenerate);

@@ -15,7 +15,7 @@ ScreenVertex Viewport::project(const ClipVertex& cv) const {
     s.depth = ndcZ * 0.5f + 0.5f;
     s.w = cv.clip.w;
     s.invW = invW;
-    // v 是未除的属性；除法只在这里发生一次。
+    // v 保持未除：逐像素的属性除法在 interpolate.h:20/:43-49（planeAttr / planeInvW），不在这里。
     s.v = cv.v;
     return s;
 }
