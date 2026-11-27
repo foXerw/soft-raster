@@ -11,7 +11,7 @@
 而是**在边界两侧各取一点**：`u=0.24` 与 `u=0.26`（W=4）必须落在相邻的两个不同纹素上。另一种常见写法 `round(u*W)` 把边界挪到纹素中心，
 整张贴图偏移半个纹素：症状不是崩溃，是"贴图好像没对齐"，而你会先怀疑 uv 插值。双线性因此要把坐标平移回"中心格点"：
 `centered = u*W - 0.5`，`floor(centered)` 是左/下 tap，小数部分是朝右/下的比重（`src/render/sampler.cpp:75-96、127-128`）。
-nearest 与 bilinear 共用 `texelIndex`/`wrapCoord` 这一层：uv→下标写两遍，就会有一处悄悄漂半格。
+nearest 与 bilinear 共用 `wrapCoord`，bilinear 的 `lowerTap` 与 `texelIndex` 同规则（fmod/clamp/floor）：uv→下标写两遍，就会有一处悄悄漂半格。
 
 ## 最小片段 1：nearest/bilinear，以及 off-by-half 的对照
 
@@ -315,7 +315,7 @@ log2(256)=8 级——"差一个固定常数"就是单位错的指纹（`tests/un
 **两个正交旋钮与按键。** `filter` 与 `useMip` 是独立字段（`src/render/sampler.h:34-43`，Ruling 31）：`useMip=false + Trilinear` 合法，语义是"永远 level 0 的双线性"；
 `Nearest + useMip=true` 是"在被选中级上取单纹素"。统一入口 `sample()` 先定 LOD 再分派（`sampler.cpp:186-199`）。app 里 **`1` 键开关 mip、`2` 键循环
 nearest→bilinear→trilinear**（`src/app/win32_window.cpp:246-247`、`src/app/main.cpp:414-421`）；没有 `--mip` 命令行旗标，状态打在终端 `[mip] 开/关` 与 HUD 的
-`MIP ON/OFF`（`main.cpp:363、499`）。golden 立方体用 ClampEdge：每面 uv 正好铺满 [0,1]，Repeat 会让右边缘回绕抄到第 0 列的颜色（`src/scene/golden_scene.cpp:35-45`）；
+`MIP ON/OFF`（`main.cpp:418、499`）。golden 立方体用 ClampEdge：每面 uv 正好铺满 [0,1]，Repeat 会让右边缘回绕抄到第 0 列的颜色（`src/scene/golden_scene.cpp:35-45`）；
 导入模型则用 Repeat（外部 uv 常越界，`main.cpp:196-201`）。
 
 **单一编码点，与 188。** 颜色目标的每次写入恰好在写那一刻编码一次：光栅出口 `encodeSRGB(fo.color)`（`src/render/render_backend.cpp:117`），FS 输出永远是线性
@@ -346,7 +346,7 @@ nearest→bilinear→trilinear**（`src/app/win32_window.cpp:246-247`、`src/app
 比对逻辑一份、容差 ±1/通道（`tests/golden/golden.cpp:25、117-126`）。`textured_golden_frame_is_not_the_m3_frame`
 守"新函数真的接了纹理"：我用现有 build/Debug 产物实跑，打印 `[golden-tex] 与 M3 帧相差 4257 个像素，其中 HUD 区 18 个`，
 断言是 diffs>1500 且 HUD 差>0（`tests/unit/test_golden_scene_textured.cpp:355-379`）——4257/18 是那次运行的实测值。
-诚实的边界：4×4 格贴图端到端**分不出** Bilinear 与 Trilinear（格心在各级都是纯标记色），所以那条边界测试只断言"混合中间调、分不清"（:281-321），
+诚实的边界：4×4 格贴图端到端**分不出** Bilinear 与 Trilinear（level 0/1/2 的格心都是纯标记色），所以那条边界测试只断言"混合中间调、分不清"（:281-321），
 mip 的守门是 LOD 单测 + 参考图逐字节比对 + 肉眼验收（M4 notes §8）。`map_Kd` 的选项 arity 教训（表写多 ⇒ 多吞一个 token 吃掉文件名 ⇒ 整个文件被拒）属于第 08 章（M5 notes §4）。
 
 ## 坑（一手来自 docs/notes/）
@@ -373,7 +373,7 @@ mip 的守门是 LOD 单测 + 参考图逐字节比对 + 肉眼验收（M4 notes
 
 真 app（`build/Debug/soft-raster.exe`，或你自己编的）：旋转的棋盘立方体，HUD 有 `MIP ON  TRILINEAR`。按 `1`：终端打 `[mip] 关（永远 level 0，会闪）`、
 HUD 变 `MIP OFF`；**盯着斜面与远处看**——level 0 在缩小处欠采样，旋转时相邻帧采到不同纹素，棋盘格会闪烁/爬行；再按 `1` 恢复，闪消失。
-按 `2` 循环过滤：NEAREST 时格边是硬边、BILINEAR 时格边是混合中间调。"关 mip 会闪"是 spec §8 M4 的验收判据（`main.cpp:363` 注释、M4 notes 记录产品方肉眼验收）；
-静态证据是 `minified_quad_keeps_level_zero_aliasing`：关 mip 时 level 0 保留锯齿（64 像素扫描里跳变 ≥10 次），开 mip 则没有。我本章验证的是按键通路、状态打印与这条静态断言，
+按 `2` 循环过滤：NEAREST 时格边是硬边、BILINEAR 时格边是混合中间调。"关 mip 会闪"是 spec §8 M4 的验收判据（`main.cpp:416-418` 注释；M4 notes :3 记"关会闪、打开不闪"，产品方肉眼验收的记录在 `test_golden_scene_textured.cpp:291-292`）；
+静态证据是 `minified_quad_keeps_level_zero_aliasing`：它在 **mip 开着**（useMip=true）时跑，正确接线 rho=0.64<1 ⇒ level 0 保留锯齿（64 像素扫描里跳变 ≥10 次），gradU/gradV 转置会选到 level 1 均匀灰而红——它守的是梯度接线，不是 mip 开/关对照。我本章验证的是按键通路、状态打印与这条静态断言，
 闪烁本身请你在窗口里亲眼看——那是这一章的肉眼验收门。若关 mip 后**不闪**：先确认 HUD 真的变了 OFF，再看的是不是缩小/斜视的面（正对且放大时 level 0 本来就够）；
 若贴图整体偏半格或某个角颜色不对，回片段 1 的边界断言与 M4 §7 的 uv 角色化，别先怀疑采样器。

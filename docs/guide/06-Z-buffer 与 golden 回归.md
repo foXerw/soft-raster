@@ -129,8 +129,8 @@ coplanar   <     covered=12 written= 6 rejected= 6  probe(0,0)=FFFF0000 depth=0.
 ```
 
 读法：**两种顺序最终像素相同**（probe 都是绿、深度 0.25）——Z-buffer 相对 painter 的全部意义；但**计数器不同**：
-近先画，远的 3 个重叠像素被拒；远先画，一个不拒。仓库测试刻意"近先远后"（`test_depth.cpp:53-55`）：反过来画，
-`fragmentsDepthRejected > 0` 测的其实是"绘制顺序恰好让深度没机会起作用"（M3 notes §3）。共面两行是 `<=` 与 `<` 的
+近先画，远的 3 个重叠像素被拒；远先画，一个不拒。仓库测试刻意"近先远后"（`test_depth.cpp:53-55`）：反过来画
+`fragmentsDepthRejected` 恒 0、`>0` 断言直接红，颜色断言却深度开/关都绿——"绘制顺序恰好让深度没机会起作用"（M3 notes §3）。共面两行是 `<=` 与 `<` 的
 唯一差别：cyan（后画）对 red（先画），rejected 0 对 6。
 
 ## 三个计数器：差就是诊断
@@ -173,7 +173,7 @@ written 少，可能没覆盖、可能被深度拒、可能被 FS 丢——**比
 
 我实测（MSVC 直接编译生产源码）：M4 今天生成 vs 参考 **md5 同为 `1f767a114a49d38c454448eec4465d51`**；M3 ±1 绿、
 精确差 **2 字节各 −1**（`cmp -l` 偏移 64925/91699，与 README 记录一致）——参考图停在 `3f8cc2a`，之后
-src/render+src/scene 又变了 **38** 个提交而图没重生成（HEAD 实测；复跑 `git rev-list --count 3f8cc2a..HEAD -- src/render src/scene`，只会变大）。**拿 md5 当 M3 门禁会误判自己的重构**；"只改 1/255"的回归在 M3
+src/render+src/scene 又变了 **38** 个提交而图没重生成（48d940f 实测；复跑 `git rev-list --count 3f8cc2a..HEAD -- src/render src/scene`，只会变大）。**拿 md5 当 M3 门禁会误判自己的重构**；"只改 1/255"的回归在 M3
 上抓不住——弱一档门禁的诚实代价。
 
 **抵消不是逐字节精确的（Ruling 77）**：M5 同时删掉 OBJ 的 `v=1-v` 与 TGA 的 origin 翻转，画面肉眼正确，锚 3 仍红
@@ -339,7 +339,7 @@ golden 不走的路。③下锚 3 的红是舍入残差，**不可依赖**——
 - **退出码夹到 1**：`return failed > 1 ? 1 : failed`（`tests/main.cpp:62-65`）。POSIX 截断到 0–255，恰好 256 条失败
   ⇒ rc=0 像全绿。M4 终审发现、**M5.0 修复**（commit `1fdf43f`；`git log -S "failed > 1 ? 1 : failed" -- tests/main.cpp`
   命中它，`-- tests/harness.cpp` 为空——夹钳从来不在 harness 里）。
-- **测试 TU 必须显式列进 `add_executable`**（`CMakeLists.txt:86-88` 注释、:92-140 列表，`test_depth.cpp` 在 :115）：
+- **测试 TU 必须显式列进 `add_executable`**（`CMakeLists.txt:86-88` 注释、:92-146 列表，`test_depth.cpp` 在 :115）：
   做成静态库再链，自注册 TU 被整个丢掉，**零用例零报错**（第 00 章坑 3）。
 - **Release 验证一律 `--clean-first`**（M4 notes §10）：增量构建藏警告——`plane_eq.h` 那条 C4723 是全量重建才定位到
   的。配套：**构建失败绝不读测试结果**。
@@ -351,8 +351,8 @@ golden 不走的路。③下锚 3 的红是舍入残差，**不可依赖**——
    （这段裁定只活在账本 Ruling 57 原文里，M5 notes 未记——账本不在 git 里，见本系列反复提的那条风险）。
 2. **变异必须被展示为真的红过**：M3 §6 删 y 翻转→红→恢复→绿（片段 2 复现）。推论是 **Ruling 107**（M6 账本）：
    每条"已验证"都必须能在仓库或 build/ 找到原始输出；把没跑过的验证写成跑过并通过，是本章一直在防的那件事的完成形态。
-3. **夹具在目标错误下不变，就抓不住那个错误**：`nearer_triangle_wins` 第一版远先画，`fragmentsDepthRejected` 恒 0
-   ——测的是"绘制顺序恰好让深度没机会起作用"（M3 notes §3，`test_depth.cpp:53-55`）。家族最大成员是双翻转抵消
+3. **夹具在目标错误下不变，就抓不住那个错误**：`nearer_triangle_wins` 第一版远先画，颜色断言深度开/关都绿
+   ——测的是"绘制顺序恰好让深度没机会起作用"（M3 notes §3，`test_depth.cpp:53-55`；rejected 恒 0，`>0` 断言会直接红）。家族最大成员是双翻转抵消
    （M5 §1）；M4 notes §1 有此前五例。固定一问：**把两个轴/权重/取整/翻转对调，夹具会给出不同的数吗？**
 
 ## 绕向：只信符号，不信词
