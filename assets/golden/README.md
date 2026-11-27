@@ -11,7 +11,7 @@
 
 三张图共用姿态常量（`golden_scene.h` 的 `kGoldenModelRotX/Y`、`kGoldenCamZ`、`kGoldenCubeSize`；
 lit 球沿用同一套固定姿态，D15 不用 fit），所以 M4 那张相对 M3 的差别只有"面上画的是什么"和标题里的一个字。
-三个生成入口是**三个 flag**（`--golden-write` / `--golden-write-textured` / `--golden-write-lit`）
+四个生成入口是**四个 flag**（`--golden-write` / `--golden-write-textured` / `--golden-write-obj` / `--golden-write-lit`，见 `src/app/cmdline.cpp:109,115,122,128`；本行旧版写"三个"，漏了 M5 的 `--golden-write-obj`）
 而不是一个带默认值的场景选择：默认值意味着"忘了指定场景"
 会把 M4 的图画进 M3 的路径，而那个错误的症状是"重新生成之后一切正常"。
 
