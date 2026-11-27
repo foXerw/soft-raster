@@ -11,10 +11,10 @@ namespace {
 
 constexpr float kEps = 1e-6f;
 
-sr::ClipVertex makeCV(float x, float y, float z, float w, float uOverW) {
+sr::ClipVertex makeCV(float x, float y, float z, float w, float attrU) {   // attrU = **未除**的属性（C2 之前此参数叫 uOverW）
     sr::ClipVertex cv;
     cv.clip = sr::Vec4{x, y, z, w};
-    cv.v.color = sr::Vec4{uOverW, 0, 0, 1};
+    cv.v.color = sr::Vec4{attrU, 0, 0, 1};
     return cv;
 }
 
@@ -84,9 +84,9 @@ SR_TEST(clip_across_posX_produces_the_hand_derived_result) {
     // 手工推导（实现之前算好，这是本任务唯一的精确参考用例）：
     //   平面是 x <= w，距离取 d = w - x（内部为正）。
     //   边 A→B：d_A = 1-1.5 = -0.5, d_B = 1-0 = 1 ⇒ t = d_A/(d_A-d_B) = 1/3
-    //          ⇒ 交点 = A + t(B-A) = (1.0, 1/3)，uOverW = lerp(3, 0, 1/3) = 2
+    //          ⇒ 交点 = A + t(B-A) = (1.0, 1/3)，未除属性 attrU = lerp(3, 0, 1/3) = 2
     //   边 C→A：d_C = 1, d_A = -0.5 ⇒ t = 1/1.5 = 2/3
-    //          ⇒ 交点 = C + t(A-C) = (1.0, -1/3)，uOverW = lerp(0, 3, 2/3) = 2
+    //          ⇒ 交点 = C + t(A-C) = (1.0, -1/3)，未除属性 attrU = lerp(0, 3, 2/3) = 2
     //   于是输出 4 个顶点；原三角形面积 3/2，裁剪后 4/3，比值 8/9。
     const sr::ClipVertex in[3] = {makeCV(1.5f, 0, 0, 1, 3), makeCV(0, 1, 0, 1, 0),
                                   makeCV(0, -1, 0, 1, 0)};
@@ -110,7 +110,7 @@ SR_TEST(clip_across_posX_produces_the_hand_derived_result) {
         hasQ |= isQ;
         // 两个交点必须正好贴在平面上（x == w）
         if (isP || isQ) SR_ASSERT_NEAR(c.x, c.w, 1e-6f);
-        // 交点上的 uOverW 必须是 2 —— 这条证明 v 与 clip 用的是同一个 t（Review Focus 2）
+        // 交点上的**未除**属性 attrU 必须是 2 —— 这条证明 v 与 clip 用的是同一个 t（Review Focus 2）
         if (isP || isQ) SR_ASSERT_NEAR(out[i].v.color.x, 2.0f, 1e-5f);
     }
     SR_ASSERT(hasB && hasC && hasP && hasQ);
