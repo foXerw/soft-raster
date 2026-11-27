@@ -5,7 +5,7 @@
 namespace sr {
 namespace {
 
-constexpr int kMaxPolygonVerts = kMaxClippedVerts;   // 9：见头文件里的推导
+constexpr int kMaxPolygonVerts = kMaxClippedVerts;   // 10 = 3 + 七个判据平面：见头文件里的推导
 
 ClipVertex lerpClipVertex(const ClipVertex& a, const ClipVertex& b, float t) {
     ClipVertex r;

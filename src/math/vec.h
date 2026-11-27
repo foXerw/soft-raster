@@ -91,7 +91,7 @@ inline float dot(const Vec4& a, const Vec4& b) {
 inline Vec4 makeVec4(const Vec3& v, float w) { return {v.x, v.y, v.z, w}; }
 inline Vec3 xyz(const Vec4& v) { return {v.x, v.y, v.z}; }
 
-// 透视除法：clip → NDC。调用方保证 w != 0（裁剪之后视锥内的顶点 w > 0）。
+// 透视除法：clip → NDC。裁剪保证视锥内顶点 w ≥ 0（kPlaneNegW 的 d ≥ 0 把边界算作"在内"）；w == 0 未被测试覆盖。
 inline Vec3 perspectiveDivide(const Vec4& v) {
     const float inv = 1.0f / v.w;
     return {v.x * inv, v.y * inv, v.z * inv};
@@ -99,8 +99,8 @@ inline Vec3 perspectiveDivide(const Vec4& v) {
 
 // ---- 公共插值 ------------------------------------------------------------
 
-// 裁剪阶段与属性插值都用它。注意：对 ClipVertex 的 clip 与 vOverW 必须用**同一个** t，
-// 这是透视正确性的来源（推导写在 render/vertex.h 顶部）。
+// 裁剪阶段与属性插值都用它。注意：对 ClipVertex 的 clip 与**未除的** v 必须用**同一个** t，
+// 这是透视正确性的来源（推导见 docs/notes/M2 §2，实现见 render/clipping.cpp:10-18）。
 inline Vec2 lerp(const Vec2& a, const Vec2& b, float t) { return a + (b - a) * t; }
 inline Vec3 lerp(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
 inline Vec4 lerp(const Vec4& a, const Vec4& b, float t) { return a + (b - a) * t; }

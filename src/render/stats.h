@@ -33,7 +33,7 @@ struct FrameStats {
     // sum(ms*) ≈ msTotal（略小：循环/尾巴开销未归段），stage_timers_partition_the_total
     // 钉住这个关系。msTotal 只覆盖 drawRange；整帧时间（clear/HUD/sink）在 app 层另测。
     // 绝不逐像素（C5）。读时钟次数（P107）：未裁剪三角形 4 次 lap；裁剪成 n 顶点的
-    // 多边形 2+(n−2) 次 setup lap + 每个被接受子三角形一次 raster lap（n≤9 ⇒ 至多 16）。
+    // 多边形 2+(n−2) 次 setup lap + 每个被接受子三角形一次 raster lap（n≤10 ⇒ 至多 18）。
     // stats == nullptr（P106）：lap 一次都不读，但两只 Timer 的构造仍无条件各读一次
     //（timer.h）—— 每次 draw call 固定 2 次，不是 0 次。
     double msVertex = 0;

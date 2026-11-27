@@ -196,7 +196,7 @@ SR_TEST(clip_of_a_near_plane_band_stays_within_the_invariant) {
 
 SR_TEST(clip_stays_within_the_documented_vertex_capital) {
     // 一个同时跨过多个平面的三角形是最坏情况。断言两件事：
-    // 结果不超过头文件承诺的上界（9），且每个输出顶点都在视锥内。
+    // 结果不超过头文件承诺的上界（10 = 3 + 七个裁剪平面），且每个输出顶点都在视锥内。
     // 上界写小的后果是静默截断，症状是"模型某些角缺一块"—— 比崩溃更难查。
     const sr::ClipVertex in[3] = {makeCV(2, 2, 2, 1, 1), makeCV(-2, 2, -2, 1, 2), makeCV(0, -3, 0, 1, 3)};
     sr::ClipVertex out[sr::kMaxClippedVerts];

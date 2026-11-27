@@ -136,8 +136,8 @@ Mesh: {pos, normal, uv}  (OBJ 索引化)
   ▼
 [Primitive Assembly]  每 3 个顶点组成三角形
   ▼
-[Clip]  clip space 六面裁剪（-w ≤ x,y ≤ w，-w ≤ z ≤ w），Sutherland–Hodgman 多边形裁剪，
-        裁剪后多边形以扇形重三角化（1 个凸多边形 → 最多 3 个三角形）
+[Clip]  clip space 七面裁剪（w ≥ 0，加上 -w ≤ x,y ≤ w，-w ≤ z ≤ w），Sutherland–Hodgman 多边形裁剪，
+        裁剪后多边形以扇形重三角化（顶点数 ≤ kMaxClippedVerts = 10 ⇒ 最多 8 个三角形）
   ▼
 [Perspective Divide]  xyz / w → NDC
   ▼

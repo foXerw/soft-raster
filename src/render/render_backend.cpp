@@ -45,7 +45,7 @@ void BackendA::drawRange(const Mesh& mesh, const PipelineState& state,
     // 读时钟次数（P107 修正，原话"每个三角形至多 4 次"只对未裁剪的三角形成立）：
     // 未裁剪 = 恰好 4 次 lap（VS/clip/setup/raster）；裁剪成 n 顶点的多边形 =
     // 2 + (n−2) 次 setup lap + 每个**被接受**子三角形一次 raster lap，
-    // n ≤ kMaxClippedVerts = 9 ⇒ 每个输入三角形至多 2 + 2×7 = 16 次。
+    // n ≤ kMaxClippedVerts = 10 ⇒ 每个输入三角形至多 2 + 2×8 = 18 次（2 次 VS/clip + 8 子三角形）。
     // stats == nullptr（P106 修正，原话"一次时钟都不读"是假的）：所有 lap 都被守卫
     // 不再读时钟，但 `Timer total/stage` 的构造各**无条件**读一次（timer.h:17）⇒
     // 每次 draw call 固定 2 次读。被守卫的是 lap，不是构造。
